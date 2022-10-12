@@ -36,12 +36,12 @@ path = "src/lib.rs"
 # Dependencies on other LNP/BP repositories
 # -----------------------------------------
 amplify = { version = "~3.13.0", features = ["apfloat"] }
-bp-core = { version = "~0.8.0" }
+bp-core = { git = "https://github.com/zoedberg/bp-core", branch = "fixes", version = "0.8.0" }
 lnpbp = { version = "~0.8.0", features = ["zip"] }
 stens = "~0.7.1"
 strict_encoding = { version = "~0.8.0", features = ["crypto", "chrono", "bitcoin", "float"] }
 commit_verify = { version = "~0.8.0", features = ["rand", "bulletproofs"] }
-descriptor-wallet = "~0.8.0"
+descriptor-wallet = { git = "https://github.com/zoedberg/descriptor-wallet", branch = "fixes", version = "0.8.0" }
 aluvm = { version = "~0.7.0", features = ["std", "strict_encoding"] }
 # Dependencies on core rust-bitcoin ecosystem projects
 # ----------------------------------------------------
