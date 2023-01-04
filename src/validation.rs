@@ -377,7 +377,9 @@ impl<'consignment, 'resolver, C: Consignment<'consignment>, R: ResolveTx>
             return validator.status;
         }
 
+        println!("validate_contract start: {}", chrono::prelude::Utc::now().timestamp_millis());
         validator.validate_contract(consignment.schema());
+        println!("validate_contract end: {}", chrono::prelude::Utc::now().timestamp_millis());
 
         // Done. Returning status report with all possible failures, issues,
         // warnings and notifications about transactions we were unable to
@@ -407,6 +409,7 @@ impl<'consignment, 'resolver, C: Consignment<'consignment>, R: ResolveTx>
             return;
         }
 
+        println!("Validating contract with {} endpoint transitions", self.end_transitions.len());
         // [VALIDATION]: Validate genesis
         self.status +=
             schema.validate(&self.node_index, self.consignment.genesis(), &schema.script);
@@ -418,6 +421,7 @@ impl<'consignment, 'resolver, C: Consignment<'consignment>, R: ResolveTx>
         //               instead treat it as a superposition of subgraphs, one
         //               for each endpoint; and validate them independently.
         for (node, bundle_id) in self.end_transitions.clone() {
+            println!("Validating branch for node ID {}", node.node_id());
             self.validate_branch(schema, node, bundle_id);
         }
         // Replace missed (not yet mined) endpoint witness transaction failures
@@ -471,7 +475,9 @@ impl<'consignment, 'resolver, C: Consignment<'consignment>, R: ResolveTx>
         // a given node is valid against the schema + committed into bitcoin
         // transaction graph with proper anchor. That is what we are
         // checking in the code below:
+        let mut copy_queue: VecDeque<&dyn Node> = VecDeque::new();
         queue.push_back(node);
+        copy_queue.push_back(node);
         while let Some(node) = queue.pop_front() {
             let node_id = node.node_id();
             let node_type = node.node_type();
@@ -543,9 +549,13 @@ impl<'consignment, 'resolver, C: Consignment<'consignment>, R: ResolveTx>
                 })
                 .collect();
 
+            copy_queue.extend(parent_nodes_1.clone());
+            copy_queue.extend(parent_nodes_2.clone());
             queue.extend(parent_nodes_1);
             queue.extend(parent_nodes_2);
         }
+        let processed = copy_queue.iter().map(|n| n.node_id().to_string()).collect::<Vec<String>>();
+        println!("processed node IDs: {:?}", processed);
     }
 
     fn validate_graph_node(

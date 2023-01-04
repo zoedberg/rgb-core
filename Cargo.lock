@@ -1094,12 +1094,13 @@ dependencies = [
 
 [[package]]
 name = "rgb-core"
-version = "0.8.1"
+version = "0.8.2"
 dependencies = [
  "aluvm",
  "amplify",
  "bitcoin",
  "bp-core",
+ "chrono",
  "commit_verify",
  "descriptor-wallet",
  "grin_secp256k1zkp",
