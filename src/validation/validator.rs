@@ -28,6 +28,7 @@ use bp::dbc::{Anchor, Proof};
 use bp::seals::txout::{TxoSeal, Witness};
 use bp::{dbc, Outpoint};
 use commit_verify::mpc;
+use secp256k1_zkp::rand::prelude::SliceRandom;
 use single_use_seals::SealWitness;
 
 use super::status::Failure;
@@ -280,7 +281,9 @@ impl<
                     }
                 };
             for op in bundle.known_transitions.values() {
+                println!("order start");
                 ops.insert(OrdOpRef::Transition(op, witness_id, witness_ord));
+                println!("order end");
                 for input in &op.inputs {
                     // We will error in `validate_operations` below on the absent extension from the
                     // consignment.
@@ -306,7 +309,9 @@ impl<
                 }
             }
         }
-        for op in ops {
+        let mut ops_vec: Vec<OrdOpRef> = ops.into_iter().collect();
+        ops_vec.shuffle(&mut bp::secp256k1::rand::thread_rng());
+        for op in ops_vec {
             // We do not skip validating archive operations since after a re-org they may
             // become valid and thus must be added to the contract state and validated
             // beforehand.

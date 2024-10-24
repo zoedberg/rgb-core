@@ -369,6 +369,7 @@ impl Ord for WitnessPos {
     /// across multiple blockchains, while height evolves with a different
     /// speed and can't be used in comparisons.
     fn cmp(&self, other: &Self) -> Ordering {
+        println!("Ordering WitnessPos");
         assert!(self.timestamp > 0);
         assert!(other.timestamp > 0);
         const BLOCK_TIME: i64 = 10 /*min*/ * 60 /*secs*/;
