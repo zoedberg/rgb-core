@@ -5,7 +5,7 @@ use std::iter;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
-use aluvm::data::Number;
+use aluvm::data::{MaybeNumber, Number};
 use aluvm::isa::{ExecStep, InstructionSet};
 use aluvm::library::LibSite;
 use aluvm::reg::{CoreRegs, Reg, Reg16, Reg32, RegA, RegS};
@@ -65,10 +65,6 @@ impl GlobalStateIter for MockGlobalStateIter {
 
     fn prev(&mut self) -> Option<(GlobalOrd, Self::Data)> {
         if self.initial_depth_reset {
-            // If reset was called, prev() should ideally pick up from where last() would have.
-            // Or, more simply, disallow prev() after reset if nth() is the only user of
-            // reset+last. For now, let's make prev() restart if reset was
-            // called for last().
             self.current_idx_for_prev = self.data.len();
             self.initial_depth_reset = false;
         }
@@ -98,7 +94,7 @@ impl GlobalStateIter for MockGlobalStateIter {
         self.initial_depth_reset = true;
         let depth_u32 = depth.to_u32();
         if self.data.is_empty() || depth_u32 >= self.original_size.to_u32() {
-            self.current_idx_for_last = self.data.len(); // invalid index
+            self.current_idx_for_last = self.data.len();
         } else {
             self.current_idx_for_last = self.data.len() - 1 - (depth_u32 as usize);
         }
@@ -118,7 +114,7 @@ impl ContractStateAccess for MockContractState {
         let iter = MockGlobalStateIter {
             data: data_for_type,
             current_idx_for_prev: size.to_usize(),
-            current_idx_for_last: 0, // Placeholder, reset will set it
+            current_idx_for_last: 0,
             original_size: size,
             initial_depth_reset: false,
         };
@@ -201,15 +197,62 @@ fn exec_op_and_assert_st0<S: ContractStateAccess + Clone>(
     expected_st0_ok: bool,
 ) {
     let step = op.exec(regs, LibSite::default(), context);
-    assert_eq!(
-        regs.status(), // Corrected to use regs.status()
-        expected_st0_ok,
-        "ST0 flag (is_ok) mismatch for op {:?}",
-        op
-    );
+    assert_eq!(regs.status(), expected_st0_ok, "ST0 flag (is_ok) mismatch for op {:?}", op);
     if !expected_st0_ok {
         assert_eq!(step, ExecStep::Stop, "ExecStep should be Stop on failure for op {:?}", op);
     } else {
         assert_eq!(step, ExecStep::Next, "ExecStep should be Next on success for op {:?}", op);
     }
+}
+
+fn create_vm_context<'op, S: ContractStateAccess>(
+    contract_id: ContractId,
+    op_info: OpInfo<'op>,
+    contract_state: Rc<RefCell<S>>,
+) -> VmContext<'op, S> {
+    VmContext {
+        contract_id,
+        op_info,
+        contract_state,
+    }
+}
+
+fn create_default_op_info_genesis<'genesis>(
+    genesis_op_ref: &'genesis Genesis,
+    ord_op_ref: &'genesis OrdOpRef<'genesis>,
+    empty_assignments: &'genesis Assignments<GraphSeal>,
+) -> OpInfo<'genesis> {
+    OpInfo {
+        id: genesis_op_ref.id(),
+        prev_state: empty_assignments,
+        op: ord_op_ref,
+    }
+}
+
+#[test]
+fn test_cng_success_single_global() {
+    let mut regs = CoreRegs::default();
+    let mock_contract_state_rc = Rc::new(RefCell::new(MockContractState::default()));
+
+    let mut genesis_op_val = create_dummy_genesis();
+    let contract_id = genesis_op_val.contract_id();
+
+    genesis_op_val
+        .globals
+        .add_state(DUMMY_GLOBAL_TYPE_A, RevealedData::new(SmallBlob::try_from(vec![1u8]).unwrap()))
+        .unwrap();
+
+    let empty_assignments_for_genesis = Assignments::<GraphSeal>::default();
+    let ord_op_ref_val = OrdOpRef::Genesis(&genesis_op_val);
+
+    let op_info = create_default_op_info_genesis(
+        &genesis_op_val,
+        &ord_op_ref_val,
+        &empty_assignments_for_genesis,
+    );
+    let context = create_vm_context(contract_id, op_info, mock_contract_state_rc.clone());
+
+    let op = ContractOp::CnG(DUMMY_GLOBAL_TYPE_A, Reg32::Reg0);
+    exec_op_and_assert_st0(op, &mut regs, &context, true);
+    assert_eq!(regs.get_n(RegA::A8, Reg32::Reg0), MaybeNumber::from(Number::from(1u8)));
 }
