@@ -229,6 +229,18 @@ fn create_default_op_info_genesis<'genesis>(
     }
 }
 
+fn create_default_op_info_transition<'transition>(
+    transition_op_ref: &'transition Transition,
+    prev_state_ref: &'transition Assignments<GraphSeal>,
+    ord_op_ref: &'transition OrdOpRef<'transition>,
+) -> OpInfo<'transition> {
+    OpInfo {
+        id: transition_op_ref.id(),
+        prev_state: prev_state_ref,
+        op: ord_op_ref,
+    }
+}
+
 #[test]
 fn test_cng_success_single_global() {
     let mut regs = CoreRegs::default();
