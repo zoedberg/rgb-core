@@ -30,7 +30,6 @@ mod op_contract;
 #[macro_use]
 mod macroasm;
 mod contract;
-
 pub use aluvm::aluasm_isa;
 pub use contract::{
     ContractStateAccess, ContractStateEvolve, GlobalContractState, GlobalOrd, GlobalStateIter,

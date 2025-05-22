@@ -672,3 +672,6 @@ impl<S: ContractStateAccess> Bytecode for ContractOp<S> {
         })
     }
 }
+
+#[cfg(test)]
+mod tests;
