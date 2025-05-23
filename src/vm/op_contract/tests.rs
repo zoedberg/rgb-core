@@ -5,11 +5,11 @@ use std::iter;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
-use aluvm::data::{MaybeNumber, Number};
-use aluvm::isa::{ExecStep, InstructionSet};
+use aluvm::data::{ByteStr, MaybeNumber, Number};
+use aluvm::isa::ExecStep;
 use aluvm::library::LibSite;
-use aluvm::reg::{CoreRegs, Reg, Reg16, Reg32, RegA, RegS};
-use amplify::confinement::{NonEmptyOrdSet, NonEmptyVec, SmallBlob};
+use aluvm::reg::{CoreRegs, Reg, Reg16, Reg32, RegA, RegF, RegR, RegS};
+use amplify::confinement::{NonEmptyOrdSet, NonEmptyVec, SmallBlob, SmallOrdMap};
 use amplify::num::u24;
 use bp::{Outpoint, Txid};
 use commit_verify::StrictHash;
@@ -25,16 +25,16 @@ use crate::vm::{
 use crate::{
     schema, Assign, AssignmentType, Assignments, BundleId, ChainNet, ContractId, Ffv,
     FungibleState, Genesis, GenesisSeal, GlobalState, GlobalStateType, GraphSeal, Identity, Inputs,
-    MetaType, Metadata, OpId, Opout, RevealedData, RevealedValue, SchemaId, SealClosingStrategy,
-    Signature, Transition, TypedAssigns,
+    MetaType, MetaValue, Metadata, OpId, Opout, RevealedData, RevealedValue, SchemaId,
+    SealClosingStrategy, Signature, Transition, TypedAssigns,
 };
 
 const DUMMY_ASSIGN_TYPE_FUNGIBLE: AssignmentType = AssignmentType::with(1000);
 const DUMMY_ASSIGN_TYPE_DATA: AssignmentType = AssignmentType::with(1001);
-const DUMMY_ASSIGN_TYPE_RIGHTS: AssignmentType = AssignmentType::with(1002);
+const DUMMY_ASSIGN_TYPE_UNUSED: AssignmentType = AssignmentType::with(1003);
 
 const DUMMY_GLOBAL_TYPE_A: GlobalStateType = GlobalStateType::with(2000);
-const DUMMY_GLOBAL_TYPE_B: GlobalStateType = GlobalStateType::with(2001);
+const DUMMY_GLOBAL_TYPE_UNUSED: GlobalStateType = GlobalStateType::with(2002);
 
 const DUMMY_META_TYPE_A: MetaType = MetaType::with(3000);
 
@@ -43,30 +43,25 @@ struct MockContractState {
     global_data: BTreeMap<GlobalStateType, Vec<(GlobalOrd, RevealedData)>>,
     fungible_data: BTreeMap<(Outpoint, AssignmentType), Vec<FungibleState>>,
     structured_data: BTreeMap<(Outpoint, AssignmentType), Vec<RevealedData>>,
-    rights_data: BTreeMap<(Outpoint, AssignmentType), u32>,
     fail_global_access: bool,
 }
 
 #[derive(Debug)]
 struct MockGlobalStateIter {
     data: Vec<(GlobalOrd, RevealedData)>,
-    current_idx_for_prev: usize, /* For prev(): index of the *next* element to be returned
-                                  * by prev() */
-    current_idx_for_last: usize, /* For last() after reset: index of the *exact* element to
-                                  * be returned */
+    current_idx_for_prev: usize,
+    current_idx_for_last: usize,
     original_size: u24,
-    initial_depth_reset: bool,
+    has_been_reset: bool,
 }
 
 impl GlobalStateIter for MockGlobalStateIter {
     type Data = RevealedData;
-
     fn size(&mut self) -> u24 { self.original_size }
-
     fn prev(&mut self) -> Option<(GlobalOrd, Self::Data)> {
-        if self.initial_depth_reset {
+        if self.has_been_reset {
             self.current_idx_for_prev = self.data.len();
-            self.initial_depth_reset = false;
+            self.has_been_reset = false;
         }
         if self.current_idx_for_prev > 0 {
             self.current_idx_for_prev -= 1;
@@ -75,9 +70,8 @@ impl GlobalStateIter for MockGlobalStateIter {
             None
         }
     }
-
     fn last(&mut self) -> Option<(GlobalOrd, Self::Data)> {
-        if self.initial_depth_reset {
+        if self.has_been_reset {
             if self.current_idx_for_last < self.data.len() {
                 Some(self.data[self.current_idx_for_last].clone())
             } else {
@@ -89,14 +83,13 @@ impl GlobalStateIter for MockGlobalStateIter {
             None
         }
     }
-
     fn reset(&mut self, depth: u24) {
-        self.initial_depth_reset = true;
+        self.has_been_reset = true;
         let depth_u32 = depth.to_u32();
         if self.data.is_empty() || depth_u32 >= self.original_size.to_u32() {
             self.current_idx_for_last = self.data.len();
         } else {
-            self.current_idx_for_last = self.data.len() - 1 - (depth_u32 as usize);
+            self.current_idx_for_last = (self.data.len() - 1).saturating_sub(depth_u32 as usize);
         }
     }
 }
