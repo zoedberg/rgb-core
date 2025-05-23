@@ -25,7 +25,7 @@ use crate::vm::{
     OrdOpRef, UnknownGlobalStateType, VmContext, WitnessOrd, WitnessPos,
 };
 use crate::{
-    schema, Assign, AssignmentType, Assignments, BundleId, ChainNet, ContractId, Ffv,
+    schema, seal, Assign, AssignmentType, Assignments, BundleId, ChainNet, ContractId, Ffv,
     FungibleState, Genesis, GenesisSeal, GlobalState, GlobalStateType, GraphSeal, Identity, Inputs,
     MetaType, MetaValue, Metadata, OpId, Opout, RevealedData, RevealedValue, SchemaId,
     SealClosingStrategy, Signature, Transition, TypedAssigns,
@@ -228,6 +228,40 @@ fn assignments_from_typed<Seal: Copy + StrictDumb + seal::ExposedSeal>(
         confined_map.insert(k, v).unwrap();
     }
     Assignments::from_inner(confined_map)
+}
+
+fn create_fungible_assign_vec(
+    seal: GraphSeal,
+    values: Vec<u64>,
+) -> AssignVec<Assign<RevealedValue, GraphSeal>> {
+    let assigns = values
+        .into_iter()
+        .map(|v| Assign::Revealed {
+            seal,
+            state: RevealedValue::from(v),
+        })
+        .collect::<Vec<_>>();
+    if assigns.is_empty() {
+        panic!("create_fungible_assignments called with empty values");
+    }
+    AssignVec::with(NonEmptyVec::try_from(assigns).unwrap())
+}
+
+fn create_structured_assign_vec(
+    seal: GraphSeal,
+    data_items: Vec<Vec<u8>>,
+) -> AssignVec<Assign<RevealedData, GraphSeal>> {
+    let assigns = data_items
+        .into_iter()
+        .map(|d| Assign::Revealed {
+            seal,
+            state: RevealedData::new(SmallBlob::try_from(d).unwrap()),
+        })
+        .collect::<Vec<_>>();
+    if assigns.is_empty() {
+        panic!("create_structured_assignments called with empty data");
+    }
+    AssignVec::with(NonEmptyVec::try_from(assigns).unwrap())
 }
 fn create_default_op_info_genesis<'genesis>(
     genesis_op_ref: &'genesis Genesis,
