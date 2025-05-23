@@ -11,8 +11,10 @@ use aluvm::library::LibSite;
 use aluvm::reg::{CoreRegs, Reg, Reg16, Reg32, RegA, RegF, RegR, RegS};
 use amplify::confinement::{NonEmptyOrdSet, NonEmptyVec, SmallBlob, SmallOrdMap};
 use amplify::num::u24;
+use amplify::{Bytes64, Wrapper};
 use bp::{Outpoint, Txid};
 use commit_verify::StrictHash;
+use secp256k1::{generate_keypair, rand, Secp256k1};
 use strict_encoding::StrictDumb;
 
 use super::*;
@@ -41,6 +43,7 @@ const DUMMY_META_TYPE_A: MetaType = MetaType::with(3000);
 #[derive(Debug, Default, Clone)]
 struct MockContractState {
     global_data: BTreeMap<GlobalStateType, Vec<(GlobalOrd, RevealedData)>>,
+    rights_data: BTreeMap<(Outpoint, AssignmentType), u32>,
     fungible_data: BTreeMap<(Outpoint, AssignmentType), Vec<FungibleState>>,
     structured_data: BTreeMap<(Outpoint, AssignmentType), Vec<RevealedData>>,
     fail_global_access: bool,
@@ -109,7 +112,7 @@ impl ContractStateAccess for MockContractState {
             current_idx_for_prev: size.to_usize(),
             current_idx_for_last: 0,
             original_size: size,
-            initial_depth_reset: false,
+            has_been_reset: false,
         };
         Ok(GlobalContractState::new(iter))
     }
