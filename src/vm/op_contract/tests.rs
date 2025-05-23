@@ -146,7 +146,7 @@ impl ContractStateAccess for MockContractState {
     }
 }
 
-fn create_dummy_genesis() -> Genesis {
+fn dummy_genesis() -> Genesis {
     Genesis {
         ffv: Ffv::default(),
         schema_id: SchemaId::strict_dumb(),
@@ -166,7 +166,7 @@ fn dummy_witness_pos() -> WitnessPos {
 
 fn dummy_witness_ord_mined() -> WitnessOrd { WitnessOrd::Mined(dummy_witness_pos()) }
 
-fn create_dummy_transition(contract_id: ContractId, signature: Option<Signature>) -> Transition {
+fn dummy_transition(contract_id: ContractId, signature: Option<Signature>) -> Transition {
     let dummy_opout = Opout::strict_dumb();
     let mut opout_set = BTreeSet::new();
     opout_set.insert(dummy_opout);
@@ -193,7 +193,14 @@ fn exec_op_and_assert_st0<S: ContractStateAccess + Clone>(
     expected_st0_ok: bool,
 ) {
     let step = op.exec(regs, LibSite::default(), context);
-    assert_eq!(regs.status(), expected_st0_ok, "ST0 flag (is_ok) mismatch for op {:?}", op);
+    assert_eq!(
+        regs.status(),
+        expected_st0_ok,
+        "ST0 flag mismatch for op {:?}. Expected {}, got {}",
+        op,
+        expected_st0_ok,
+        regs.status()
+    );
     if !expected_st0_ok {
         assert_eq!(step, ExecStep::Stop, "ExecStep should be Stop on failure for op {:?}", op);
     } else {
@@ -213,6 +220,15 @@ fn create_vm_context<'op, S: ContractStateAccess>(
     }
 }
 
+fn assignments_from_typed<Seal: Copy + StrictDumb + seal::ExposedSeal>(
+    map: BTreeMap<AssignmentType, TypedAssigns<Seal>>,
+) -> Assignments<Seal> {
+    let mut confined_map = SmallOrdMap::new();
+    for (k, v) in map {
+        confined_map.insert(k, v).unwrap();
+    }
+    Assignments::from_inner(confined_map)
+}
 fn create_default_op_info_genesis<'genesis>(
     genesis_op_ref: &'genesis Genesis,
     ord_op_ref: &'genesis OrdOpRef<'genesis>,
