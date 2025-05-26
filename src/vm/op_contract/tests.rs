@@ -92,7 +92,7 @@ impl GlobalStateIter for MockGlobalStateIter {
         self.has_been_reset = true;
         let depth_u32 = depth.to_u32();
         if self.data.is_empty() || depth_u32 >= self.original_size.to_u32() {
-            self.current_idx_for_last = 0; // If depth is too large, reset to start or a safe
+            self.current_idx_for_last = 0;
                                            // default.
                                            // The original implementation had `self.data.len()`
                                            // which could lead to out-of-bounds on next `last()`
@@ -382,9 +382,6 @@ impl TestEnv {
         let typed_assigns =
             TypedAssigns::Fungible(create_fungible_assign_vec(GraphSeal::strict_dumb(), values));
         if let Some(g) = self.genesis_val.as_mut() {
-            // Note: For Genesis, this requires GenesisSeal, not GraphSeal.
-            // Adjusting this part if real Genesis owned assignments need to be tested.
-            // For now, it will panic as stated, or we treat genesis's owned assignments as empty.
             panic!(
                 "add_owned_assign_fungible for Genesis not fully implemented in TestEnv due to \
                  Seal type mismatch"
@@ -468,5 +465,152 @@ impl TestEnv {
         let context =
             create_vm_context(self.contract_id, op_info, self.mock_contract_state_rc.clone());
         exec_op_and_assert_st0(op_code, &mut self.regs, &context, expected_st0_ok);
+    }
+}
+
+mod count_ops {
+    use aluvm::data::{MaybeNumber, Number};
+    use aluvm::reg::{Reg32, RegA};
+
+    use super::*;
+
+    // CnP Tests (Count Previous state)
+    #[test]
+    fn test_cnp_found_multiple() {
+        let mut env = TestEnv::for_transition().add_prev_assign_fungible(
+            DUMMY_ASSIGN_TYPE_FUNGIBLE,
+            vec![10, 20, 30], // 3 items
+        );
+        let op_code = ContractOp::CnP(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A16, Reg32::Reg0), MaybeNumber::from(Number::from(3u16)));
+    }
+
+    #[test]
+    fn test_cnp_found_single() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10]);
+        let op_code = ContractOp::CnP(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A16, Reg32::Reg0), MaybeNumber::from(Number::from(1u16)));
+    }
+
+    #[test]
+    fn test_cnp_type_not_found_in_prev_state() {
+        let mut env = TestEnv::for_transition();
+        let op_code = ContractOp::CnP(DUMMY_ASSIGN_TYPE_UNUSED, Reg32::Reg0);
+        env.execute(op_code, true);
+        // CnP sets target register to None if the type is not found in prev_state
+        assert_eq!(env.regs.get_n(RegA::A16, Reg32::Reg0), MaybeNumber::none());
+    }
+
+    // CnS Tests (Count Same [owned] state)
+    #[test]
+    fn test_cns_found_multiple_transition() {
+        let mut env = TestEnv::for_transition().add_owned_assign_structured(
+            DUMMY_ASSIGN_TYPE_DATA,
+            vec![vec![1], vec![2]], // 2 items
+        );
+        let op_code = ContractOp::CnS(DUMMY_ASSIGN_TYPE_DATA, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A16, Reg32::Reg0), MaybeNumber::from(Number::from(2u16)));
+    }
+
+    #[test]
+    fn test_cns_found_single_transition() {
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_structured(DUMMY_ASSIGN_TYPE_DATA, vec![vec![1]]);
+        let op_code = ContractOp::CnS(DUMMY_ASSIGN_TYPE_DATA, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A16, Reg32::Reg0), MaybeNumber::from(Number::from(1u16)));
+    }
+
+    #[test]
+    fn test_cns_type_not_found_in_owned_state_transition() {
+        let mut env = TestEnv::for_transition();
+        let op_code = ContractOp::CnS(DUMMY_ASSIGN_TYPE_UNUSED, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A16, Reg32::Reg0), MaybeNumber::none());
+    }
+
+    // CnS for Genesis (needs specific handling for GenesisSeal if we strictly test owned
+    // assignments) For simplicity, if `add_owned_assign_...` for genesis is too complex due to
+    // seal types, we can test with an empty owned assignment for genesis, which is a valid
+    // case.
+    #[test]
+    fn test_cns_genesis_type_not_found() {
+        let mut env = TestEnv::for_genesis();
+        let op_code = ContractOp::CnS(DUMMY_ASSIGN_TYPE_UNUSED, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A16, Reg32::Reg0), MaybeNumber::none());
+    }
+
+    // CnG Tests (Count Next [current op's] Global state)
+    #[test]
+    fn test_cng_found_multiple() {
+        let mut env = TestEnv::for_genesis()
+            .add_global_current_op(DUMMY_GLOBAL_TYPE_A, vec![1])
+            .add_global_current_op(DUMMY_GLOBAL_TYPE_A, vec![2]);
+        let op_code = ContractOp::CnG(DUMMY_GLOBAL_TYPE_A, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A8, Reg32::Reg0), MaybeNumber::from(Number::from(2u8)));
+    }
+
+    #[test]
+    fn test_cng_found_single() {
+        let mut env = TestEnv::for_genesis().add_global_current_op(DUMMY_GLOBAL_TYPE_A, vec![1]);
+        let op_code = ContractOp::CnG(DUMMY_GLOBAL_TYPE_A, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A8, Reg32::Reg0), MaybeNumber::from(Number::from(1u8)));
+    }
+
+    #[test]
+    fn test_cng_type_not_found_in_globals() {
+        let mut env = TestEnv::for_genesis();
+        let op_code = ContractOp::CnG(DUMMY_GLOBAL_TYPE_UNUSED, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A8, Reg32::Reg0), MaybeNumber::none());
+    }
+
+    // CnC Tests (Count Contract's [historical] Global state)
+    #[test]
+    fn test_cnc_found_multiple() {
+        let history = vec![
+            (GlobalOrd::genesis(0), RevealedData::new(SmallBlob::try_from(vec![1]).unwrap())),
+            (GlobalOrd::genesis(1), RevealedData::new(SmallBlob::try_from(vec![2]).unwrap())),
+        ];
+        let mut env =
+            TestEnv::for_genesis().set_mock_global_state_history(DUMMY_GLOBAL_TYPE_A, history);
+        let op_code = ContractOp::CnC(DUMMY_GLOBAL_TYPE_A, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A32, Reg32::Reg0), MaybeNumber::from(Number::from(2u32)));
+    }
+
+    #[test]
+    fn test_cnc_found_single() {
+        let history =
+            vec![(GlobalOrd::genesis(0), RevealedData::new(SmallBlob::try_from(vec![1]).unwrap()))];
+        let mut env =
+            TestEnv::for_genesis().set_mock_global_state_history(DUMMY_GLOBAL_TYPE_A, history);
+        let op_code = ContractOp::CnC(DUMMY_GLOBAL_TYPE_A, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A32, Reg32::Reg0), MaybeNumber::from(Number::from(1u32)));
+    }
+
+    #[test]
+    fn test_cnc_type_not_found_in_history() {
+        let mut env = TestEnv::for_genesis();
+        let op_code = ContractOp::CnC(DUMMY_GLOBAL_TYPE_UNUSED, Reg32::Reg0);
+        env.execute(op_code, true);
+        // If type not found in BTreeMap, unwrap_or_default gives empty vec, size 0.
+        assert_eq!(env.regs.get_n(RegA::A32, Reg32::Reg0), MaybeNumber::from(Number::from(0u32)));
+    }
+
+    #[test]
+    fn test_cnc_fail_on_global_access_error() {
+        let mut env = TestEnv::for_genesis().set_mock_fail_global_access(true);
+        let op_code = ContractOp::CnC(DUMMY_GLOBAL_TYPE_A, Reg32::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(env.regs.get_n(RegA::A32, Reg32::Reg0), MaybeNumber::none());
     }
 }
