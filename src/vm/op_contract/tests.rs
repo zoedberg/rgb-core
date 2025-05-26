@@ -33,14 +33,16 @@ use crate::{
 
 const DUMMY_ASSIGN_TYPE_FUNGIBLE: AssignmentType = AssignmentType::with(1000);
 const DUMMY_ASSIGN_TYPE_DATA: AssignmentType = AssignmentType::with(1001);
+const DUMMY_ASSIGN_TYPE_RIGHTS: AssignmentType = AssignmentType::with(1002);
 const DUMMY_ASSIGN_TYPE_UNUSED: AssignmentType = AssignmentType::with(1003);
 
 const DUMMY_GLOBAL_TYPE_A: GlobalStateType = GlobalStateType::with(2000);
+const DUMMY_GLOBAL_TYPE_B: GlobalStateType = GlobalStateType::with(2001);
 const DUMMY_GLOBAL_TYPE_UNUSED: GlobalStateType = GlobalStateType::with(2002);
 
 const DUMMY_META_TYPE_A: MetaType = MetaType::with(3000);
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default, Clone, PartialEq)]
 struct MockContractState {
     global_data: BTreeMap<GlobalStateType, Vec<(GlobalOrd, RevealedData)>>,
     rights_data: BTreeMap<(Outpoint, AssignmentType), u32>,
@@ -90,7 +92,12 @@ impl GlobalStateIter for MockGlobalStateIter {
         self.has_been_reset = true;
         let depth_u32 = depth.to_u32();
         if self.data.is_empty() || depth_u32 >= self.original_size.to_u32() {
-            self.current_idx_for_last = self.data.len();
+            self.current_idx_for_last = 0; // If depth is too large, reset to start or a safe
+                                           // default.
+                                           // The original implementation had `self.data.len()`
+                                           // which could lead to out-of-bounds on next `last()`
+                                           // call. Let's
+                                           // adjust to be safe for `last()`.
         } else {
             self.current_idx_for_last = (self.data.len() - 1).saturating_sub(depth_u32 as usize);
         }
@@ -263,54 +270,203 @@ fn create_structured_assign_vec(
     }
     AssignVec::with(NonEmptyVec::try_from(assigns).unwrap())
 }
-fn create_default_op_info_genesis<'genesis>(
-    genesis_op_ref: &'genesis Genesis,
-    ord_op_ref: &'genesis OrdOpRef<'genesis>,
-    empty_assignments: &'genesis Assignments<GraphSeal>,
-) -> OpInfo<'genesis> {
-    OpInfo {
-        id: genesis_op_ref.id(),
-        prev_state: empty_assignments,
-        op: ord_op_ref,
-    }
+
+struct TestEnv {
+    contract_id: ContractId,
+    genesis_val: Option<Genesis>,
+    transition_val: Option<Transition>,
+    prev_assignments_val: Assignments<GraphSeal>,
+    owned_assignments_val: Assignments<GraphSeal>,
+    globals_val: GlobalState,
+    metadata_val: Metadata,
+    mock_contract_state_rc: Rc<RefCell<MockContractState>>,
+    regs: CoreRegs,
 }
 
-fn create_default_op_info_transition<'transition>(
-    transition_op_ref: &'transition Transition,
-    prev_state_ref: &'transition Assignments<GraphSeal>,
-    ord_op_ref: &'transition OrdOpRef<'transition>,
-) -> OpInfo<'transition> {
-    OpInfo {
-        id: transition_op_ref.id(),
-        prev_state: prev_state_ref,
-        op: ord_op_ref,
+impl TestEnv {
+    fn for_genesis() -> Self {
+        let genesis = dummy_genesis();
+        let contract_id = genesis.contract_id();
+        Self {
+            contract_id,
+            genesis_val: Some(genesis),
+            transition_val: None,
+            prev_assignments_val: Assignments::default(),
+            owned_assignments_val: Assignments::default(),
+            globals_val: GlobalState::default(),
+            metadata_val: Metadata::default(),
+            mock_contract_state_rc: Rc::new(RefCell::new(MockContractState::default())),
+            regs: CoreRegs::default(),
+        }
     }
-}
 
-#[test]
-fn test_cng_success_single_global() {
-    let mut regs = CoreRegs::default();
-    let mock_contract_state_rc = Rc::new(RefCell::new(MockContractState::default()));
+    fn for_transition() -> Self {
+        let contract_id = ContractId::strict_dumb();
+        let transition = dummy_transition(contract_id, None);
+        Self {
+            contract_id,
+            genesis_val: None,
+            transition_val: Some(transition),
+            prev_assignments_val: Assignments::default(),
+            owned_assignments_val: Assignments::default(),
+            globals_val: GlobalState::default(),
+            metadata_val: Metadata::default(),
+            mock_contract_state_rc: Rc::new(RefCell::new(MockContractState::default())),
+            regs: CoreRegs::default(),
+        }
+    }
 
-    let mut genesis_op_val = create_dummy_genesis();
-    let contract_id = genesis_op_val.contract_id();
+    fn set_contract_id(mut self, contract_id: ContractId) -> Self {
+        self.contract_id = contract_id;
+        if let Some(t) = self.transition_val.as_mut() {
+            t.contract_id = contract_id;
+        }
+        self
+    }
 
-    genesis_op_val
-        .globals
-        .add_state(DUMMY_GLOBAL_TYPE_A, RevealedData::new(SmallBlob::try_from(vec![1u8]).unwrap()))
-        .unwrap();
+    fn add_global_current_op(mut self, global_type: GlobalStateType, data: Vec<u8>) -> Self {
+        let revealed_data = RevealedData::new(SmallBlob::try_from(data).unwrap());
+        if let Some(g) = self.genesis_val.as_mut() {
+            g.globals.add_state(global_type, revealed_data).unwrap();
+        } else if let Some(t) = self.transition_val.as_mut() {
+            t.globals.add_state(global_type, revealed_data).unwrap();
+        }
+        self.globals_val = if self.genesis_val.is_some() {
+            self.genesis_val.as_ref().unwrap().globals.clone()
+        } else {
+            self.transition_val.as_ref().unwrap().globals.clone()
+        };
+        self
+    }
 
-    let empty_assignments_for_genesis = Assignments::<GraphSeal>::default();
-    let ord_op_ref_val = OrdOpRef::Genesis(&genesis_op_val);
+    fn add_metadata_current_op(mut self, meta_type: MetaType, data: Vec<u8>) -> Self {
+        let meta_value = MetaValue::from(SmallBlob::try_from(data).unwrap());
+        if let Some(g) = self.genesis_val.as_mut() {
+            g.metadata.insert(meta_type, meta_value).unwrap();
+        } else if let Some(t) = self.transition_val.as_mut() {
+            t.metadata.insert(meta_type, meta_value).unwrap();
+        }
+        self.metadata_val = if self.genesis_val.is_some() {
+            self.genesis_val.as_ref().unwrap().metadata.clone()
+        } else {
+            self.transition_val.as_ref().unwrap().metadata.clone()
+        };
+        self
+    }
 
-    let op_info = create_default_op_info_genesis(
-        &genesis_op_val,
-        &ord_op_ref_val,
-        &empty_assignments_for_genesis,
-    );
-    let context = create_vm_context(contract_id, op_info, mock_contract_state_rc.clone());
+    fn add_prev_assign_fungible(mut self, assign_type: AssignmentType, values: Vec<u64>) -> Self {
+        let typed_assigns =
+            TypedAssigns::Fungible(create_fungible_assign_vec(GraphSeal::strict_dumb(), values));
+        self.prev_assignments_val
+            .insert(assign_type, typed_assigns)
+            .unwrap();
+        self
+    }
 
-    let op = ContractOp::CnG(DUMMY_GLOBAL_TYPE_A, Reg32::Reg0);
-    exec_op_and_assert_st0(op, &mut regs, &context, true);
-    assert_eq!(regs.get_n(RegA::A8, Reg32::Reg0), MaybeNumber::from(Number::from(1u8)));
+    fn add_prev_assign_structured(
+        mut self,
+        assign_type: AssignmentType,
+        data_items: Vec<Vec<u8>>,
+    ) -> Self {
+        let typed_assigns = TypedAssigns::Structured(create_structured_assign_vec(
+            GraphSeal::strict_dumb(),
+            data_items,
+        ));
+        self.prev_assignments_val
+            .insert(assign_type, typed_assigns)
+            .unwrap();
+        self
+    }
+
+    fn add_owned_assign_fungible(mut self, assign_type: AssignmentType, values: Vec<u64>) -> Self {
+        let typed_assigns =
+            TypedAssigns::Fungible(create_fungible_assign_vec(GraphSeal::strict_dumb(), values));
+        if let Some(g) = self.genesis_val.as_mut() {
+            // Note: For Genesis, this requires GenesisSeal, not GraphSeal.
+            // Adjusting this part if real Genesis owned assignments need to be tested.
+            // For now, it will panic as stated, or we treat genesis's owned assignments as empty.
+            panic!(
+                "add_owned_assign_fungible for Genesis not fully implemented in TestEnv due to \
+                 Seal type mismatch"
+            );
+        } else if let Some(t) = self.transition_val.as_mut() {
+            t.assignments.insert(assign_type, typed_assigns).unwrap();
+        }
+        self.owned_assignments_val = self.transition_val.as_ref().unwrap().assignments.clone();
+        self
+    }
+
+    fn add_owned_assign_structured(
+        mut self,
+        assign_type: AssignmentType,
+        data_items: Vec<Vec<u8>>,
+    ) -> Self {
+        let typed_assigns = TypedAssigns::Structured(create_structured_assign_vec(
+            GraphSeal::strict_dumb(),
+            data_items,
+        ));
+        if let Some(g) = self.genesis_val.as_mut() {
+            panic!(
+                "add_owned_assign_structured for Genesis not fully implemented in TestEnv due to \
+                 Seal type mismatch"
+            );
+        } else if let Some(t) = self.transition_val.as_mut() {
+            t.assignments.insert(assign_type, typed_assigns).unwrap();
+        }
+        self.owned_assignments_val = self.transition_val.as_ref().unwrap().assignments.clone();
+        self
+    }
+
+    fn set_mock_global_state_history(
+        mut self,
+        global_type: GlobalStateType,
+        history: Vec<(GlobalOrd, RevealedData)>,
+    ) -> Self {
+        self.mock_contract_state_rc
+            .borrow_mut()
+            .global_data
+            .insert(global_type, history);
+        self
+    }
+
+    fn set_mock_fail_global_access(mut self, fail: bool) -> Self {
+        self.mock_contract_state_rc.borrow_mut().fail_global_access = fail;
+        self
+    }
+
+    fn execute<'this_env>(
+        &'this_env mut self,
+        op_code: ContractOp<MockContractState>,
+        expected_st0_ok: bool,
+    ) where
+        MockContractState: 'this_env,
+    {
+        let op_info: OpInfo;
+        let ord_op_ref_val_owned: OrdOpRef;
+
+        if let Some(genesis) = &self.genesis_val {
+            ord_op_ref_val_owned = OrdOpRef::Genesis(genesis);
+            op_info = OpInfo {
+                id: genesis.id(),
+                prev_state: &self.prev_assignments_val,
+                op: &ord_op_ref_val_owned,
+            };
+        } else if let Some(transition) = &self.transition_val {
+            let txid = Txid::strict_dumb();
+            let bundle_id = BundleId::strict_dumb();
+            ord_op_ref_val_owned =
+                OrdOpRef::Transition(transition, txid, dummy_witness_ord_mined(), bundle_id);
+            op_info = OpInfo {
+                id: transition.id(),
+                prev_state: &self.prev_assignments_val,
+                op: &ord_op_ref_val_owned,
+            };
+        } else {
+            panic!("TestEnv not initialized with an operation");
+        }
+
+        let context =
+            create_vm_context(self.contract_id, op_info, self.mock_contract_state_rc.clone());
+        exec_op_and_assert_st0(op_code, &mut self.regs, &context, expected_st0_ok);
+    }
 }
