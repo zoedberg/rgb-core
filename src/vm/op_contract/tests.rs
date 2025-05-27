@@ -51,76 +51,89 @@ struct MockContractState {
     fail_global_access: bool,
 }
 
-#[derive(Debug)]
-struct MockGlobalStateIter {
-    data: Vec<(GlobalOrd, RevealedData)>,
-    current_idx_for_prev: usize,
-    current_idx_for_last: usize,
-    original_size: u24,
-    has_been_reset: bool,
+/// A mock implementation of `GlobalStateIter` initialized from a `Vec`.
+pub struct MockGlobalStateIter<'a> {
+    data: &'a Vec<(GlobalOrd, RevealedData)>,
+    current_pos: usize,
+    last_item_cache: Option<(GlobalOrd, &'a RevealedData)>,
+    total_size: usize,
 }
 
-impl GlobalStateIter for MockGlobalStateIter {
-    type Data = RevealedData;
-    fn size(&mut self) -> u24 { self.original_size }
-    fn prev(&mut self) -> Option<(GlobalOrd, Self::Data)> {
-        if self.has_been_reset {
-            self.current_idx_for_prev = self.data.len();
-            self.has_been_reset = false;
-        }
-        if self.current_idx_for_prev > 0 {
-            self.current_idx_for_prev -= 1;
-            Some(self.data[self.current_idx_for_prev].clone())
-        } else {
-            None
-        }
-    }
-    fn last(&mut self) -> Option<(GlobalOrd, Self::Data)> {
-        if self.has_been_reset {
-            if self.current_idx_for_last < self.data.len() {
-                Some(self.data[self.current_idx_for_last].clone())
-            } else {
-                None
-            }
-        } else if !self.data.is_empty() {
-            Some(self.data[self.data.len() - 1].clone())
-        } else {
-            None
-        }
-    }
-    fn reset(&mut self, depth: u24) {
-        self.has_been_reset = true;
-        let depth_u32 = depth.to_u32();
-        if self.data.is_empty() || depth_u32 >= self.original_size.to_u32() {
-            self.current_idx_for_last = 0;
-                                           // default.
-                                           // The original implementation had `self.data.len()`
-                                           // which could lead to out-of-bounds on next `last()`
-                                           // call. Let's
-                                           // adjust to be safe for `last()`.
-        } else {
-            self.current_idx_for_last = (self.data.len() - 1).saturating_sub(depth_u32 as usize);
+impl<'a> MockGlobalStateIter<'a> {
+    pub fn new(initial_data: &'a Vec<(GlobalOrd, RevealedData)>) -> Self {
+        MockGlobalStateIter {
+            data: initial_data,
+            current_pos: 0,
+            last_item_cache: None,
+            total_size: initial_data.len(),
         }
     }
 }
+
+impl<'a> GlobalStateIter for MockGlobalStateIter<'a> {
+    type Data = &'a RevealedData;
+
+    fn size(&mut self) -> u24 {
+        u24::try_from(self.total_size as u32).expect("MockGlobalStateIter data size must fit u24")
+    }
+
+    fn prev(&mut self) -> Option<(GlobalOrd, Self::Data)> {
+        if self.current_pos < self.total_size {
+            let (ord_ref, data_ref) = &self.data[self.current_pos];
+            let item_to_return = (*ord_ref, data_ref);
+
+            self.last_item_cache = Some(item_to_return);
+            self.current_pos += 1;
+            Some(item_to_return)
+        } else {
+            self.last_item_cache = None;
+            None
+        }
+    }
+
+    fn last(&mut self) -> Option<(GlobalOrd, Self::Data)> { self.last_item_cache }
+
+    fn reset(&mut self, depth_1based: u24) {
+        if depth_1based == u24::ZERO {
+            panic!("MockGlobalStateIter cannot be reset to depth 0");
+        }
+
+        let target_idx_for_last_0based = depth_1based.to_usize() - 1; // Convert 1-based to 0-indexed
+
+        if target_idx_for_last_0based < self.total_size {
+            // The item at target_idx_for_last_0based should become the "last" item.
+            let (ord_ref, data_ref) = &self.data[target_idx_for_last_0based];
+            self.last_item_cache = Some((*ord_ref, data_ref));
+            // The next call to prev() should yield the item *after* this one.
+            self.current_pos = target_idx_for_last_0based + 1;
+        } else {
+            // Requested 1-based depth is out of bounds.
+            // e.g., total_size=1. reset(depth_1based=2). target_idx_for_last_0based=1.
+            // 1 < 1 is false. Comes here.
+            self.last_item_cache = None;
+            self.current_pos = self.total_size; // Exhausted
+        }
+    }
+}
+
+static EMPTY_GLOBAL_VEC: Vec<(GlobalOrd, RevealedData)> = Vec::new();
 
 impl ContractStateAccess for MockContractState {
     fn global(
         &self,
         ty: GlobalStateType,
-    ) -> Result<GlobalContractState<impl GlobalStateIter>, UnknownGlobalStateType> {
+    ) -> Result<GlobalContractState<impl GlobalStateIter + '_>, UnknownGlobalStateType> {
         if self.fail_global_access {
             return Err(UnknownGlobalStateType(ty));
         }
-        let data_for_type = self.global_data.get(&ty).cloned().unwrap_or_default();
-        let size = u24::try_from(data_for_type.len() as u32).unwrap_or(u24::MAX);
-        let iter = MockGlobalStateIter {
-            data: data_for_type,
-            current_idx_for_prev: size.to_usize(),
-            current_idx_for_last: 0,
-            original_size: size,
-            has_been_reset: false,
-        };
+
+        let data_ref: &Vec<(GlobalOrd, RevealedData)> = self
+            .global_data
+            .get(&ty)
+            .map_or(&EMPTY_GLOBAL_VEC, |vec| vec);
+
+        let iter = MockGlobalStateIter::new(data_ref);
+
         Ok(GlobalContractState::new(iter))
     }
 
@@ -152,7 +165,6 @@ impl ContractStateAccess for MockContractState {
             .into_iter()
     }
 }
-
 fn dummy_genesis() -> Genesis {
     Genesis {
         ffv: Ffv::default(),
@@ -415,7 +427,7 @@ impl TestEnv {
     }
 
     fn set_mock_global_state_history(
-        mut self,
+        self,
         global_type: GlobalStateType,
         history: Vec<(GlobalOrd, RevealedData)>,
     ) -> Self {
@@ -612,5 +624,369 @@ mod count_ops {
         let op_code = ContractOp::CnC(DUMMY_GLOBAL_TYPE_A, Reg32::Reg0);
         env.execute(op_code, true);
         assert_eq!(env.regs.get_n(RegA::A32, Reg32::Reg0), MaybeNumber::none());
+    }
+}
+
+mod load_ops {
+    use aluvm::data::Number;
+    use amplify::confinement::SmallBlob;
+    use bp::seals::SecretSeal;
+
+    use super::*;
+
+    // LdP (Load Previous structured state) Tests
+    #[test]
+    fn test_ldp_success_revealed() {
+        let data_vec = vec![0xAB, 0xCD, 0xEF];
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_structured(DUMMY_ASSIGN_TYPE_DATA, vec![data_vec.clone()]);
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16)); // index = 0
+
+        let op_code = ContractOp::LdP(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(0));
+        env.execute(op_code, true);
+
+        assert_eq!(env.regs.s16(RegS::from(0)).unwrap().as_ref(), data_vec.as_slice());
+    }
+
+    #[test]
+    fn test_ldp_success_concealed_seal_loads_state() {
+        let data_vec = vec![0xAA, 0xBB];
+        let revealed_data = RevealedData::new(SmallBlob::try_from(data_vec.clone()).unwrap());
+        let concealed_assign = Assign::ConfidentialSeal {
+            seal: SecretSeal::strict_dumb(),
+            state: revealed_data,
+        };
+
+        let mut prev_map = BTreeMap::new();
+        prev_map.insert(
+            DUMMY_ASSIGN_TYPE_DATA,
+            TypedAssigns::Structured(AssignVec::with(NonEmptyVec::with(concealed_assign))),
+        );
+        let mut env = TestEnv::for_transition();
+        env.prev_assignments_val = assignments_from_typed(prev_map);
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
+
+        let op_code = ContractOp::LdP(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(0));
+        env.execute(op_code, true);
+        assert_eq!(env.regs.s16(RegS::from(0)).unwrap().as_ref(), data_vec.as_slice());
+    }
+
+    #[test]
+    fn test_ldp_fail_index_reg_none() {
+        let mut env = TestEnv::for_transition(); // a16[0] (index_reg) is None
+        let op_code = ContractOp::LdP(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(0));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(0)).is_none());
+    }
+
+    #[test]
+    fn test_ldp_fail_state_type_missing_in_prev() {
+        let mut env = TestEnv::for_transition(); // prev_assignments is empty
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
+        let op_code = ContractOp::LdP(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(0));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(0)).is_none());
+    }
+
+    #[test]
+    fn test_ldp_fail_index_oob() {
+        // 1 item at index 0
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_structured(DUMMY_ASSIGN_TYPE_DATA, vec![vec![1]]);
+        // Request index 1
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(1u16));
+
+        let op_code = ContractOp::LdP(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(0));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(0)).is_none());
+    }
+
+    #[test]
+    fn test_ldp_fail_wrong_state_type_in_prev() {
+        // prev_state has DUMMY_ASSIGN_TYPE_DATA, but it's Fungible, not Structured for LdP
+        let mut env =
+            TestEnv::for_transition().add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_DATA, vec![100]);
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
+
+        let op_code = ContractOp::LdP(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(0));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(0)).is_none());
+    }
+
+    // LdS (Load Same/owned structured state) Tests
+    #[test]
+    fn test_lds_success_revealed() {
+        let data_vec = vec![0xBE, 0xEF];
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_structured(DUMMY_ASSIGN_TYPE_DATA, vec![data_vec.clone()]);
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
+
+        let op_code = ContractOp::LdS(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(1));
+        env.execute(op_code, true);
+        assert_eq!(env.regs.s16(RegS::from(1)).unwrap().as_ref(), data_vec.as_slice());
+    }
+
+    #[test]
+    fn test_lds_fail_index_reg_none() {
+        let mut env = TestEnv::for_transition(); // a16[0] is None
+        let op_code = ContractOp::LdS(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(1));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(1)).is_none());
+    }
+
+    #[test]
+    fn test_lds_fail_state_type_missing_in_owned() {
+        let mut env = TestEnv::for_transition();
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
+        let op_code = ContractOp::LdS(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(1));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(1)).is_none());
+    }
+
+    #[test]
+    fn test_lds_fail_index_oob() {
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_structured(DUMMY_ASSIGN_TYPE_DATA, vec![vec![1]]);
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(1u16)); // Request index 1
+        let op_code = ContractOp::LdS(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(1));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(1)).is_none());
+    }
+
+    #[test]
+    fn test_lds_fail_wrong_state_type_in_owned() {
+        // Data is fungible
+        let mut env =
+            TestEnv::for_transition().add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_DATA, vec![100]);
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
+        let op_code = ContractOp::LdS(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(1));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(1)).is_none());
+    }
+
+    // LdF (Load Same/owned Fungible state) Tests
+    #[test]
+    fn test_ldf_success_revealed() {
+        let fungible_val = 777u64;
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![fungible_val]);
+        // index_reg for source; destination is a64[Reg16::Reg0]
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
+
+        let op_code = ContractOp::LdF(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg16::Reg0, Reg16::Reg0);
+        env.execute(op_code, true);
+        assert_eq!(
+            env.regs.get_n(RegA::A64, Reg32::Reg0),
+            MaybeNumber::from(Number::from(fungible_val))
+        );
+    }
+
+    #[test]
+    fn test_ldf_fail_index_reg_none() {
+        let mut env = TestEnv::for_transition();
+        let op_code = ContractOp::LdF(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg16::Reg0, Reg16::Reg0);
+        env.execute(op_code, false);
+        assert!(env.regs.get_n(RegA::A64, Reg32::Reg0).is_none());
+    }
+
+    #[test]
+    fn test_ldf_fail_state_type_missing_in_owned() {
+        let mut env = TestEnv::for_transition();
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
+        let op_code = ContractOp::LdF(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg16::Reg0, Reg16::Reg0);
+        env.execute(op_code, false);
+        assert!(env.regs.get_n(RegA::A64, Reg32::Reg0).is_none());
+    }
+
+    #[test]
+    fn test_ldf_fail_index_oob() {
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![100]);
+        // Request index 1
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(1u16));
+        let op_code = ContractOp::LdF(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg16::Reg0, Reg16::Reg0);
+        env.execute(op_code, false);
+        assert!(env.regs.get_n(RegA::A64, Reg32::Reg0).is_none());
+    }
+
+    #[test]
+    fn test_ldf_fail_wrong_state_type_in_owned() {
+        // Data is structured
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_structured(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![vec![1]]);
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
+        let op_code = ContractOp::LdF(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg16::Reg0, Reg16::Reg0);
+        env.execute(op_code, false);
+        assert!(env.regs.get_n(RegA::A64, Reg32::Reg0).is_none());
+    }
+
+    // LdG (Load Global state from current op) Tests
+    #[test]
+    fn test_ldg_success() {
+        let data_vec = vec![0xC0, 0xDE];
+        let mut env =
+            TestEnv::for_genesis().add_global_current_op(DUMMY_GLOBAL_TYPE_A, data_vec.clone());
+        // index_reg for source (a8)
+        env.regs.set_n(RegA::A8, Reg32::Reg0, Number::from(0u8));
+
+        let op_code = ContractOp::LdG(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(2));
+        env.execute(op_code, true);
+        assert_eq!(env.regs.s16(RegS::from(2)).unwrap().as_ref(), data_vec.as_slice());
+    }
+
+    #[test]
+    fn test_ldg_success_multiple_items_correct_index() {
+        let data_vec1 = vec![0xC0];
+        let data_vec2 = vec![0xDE];
+        let mut env = TestEnv::for_genesis()
+            .add_global_current_op(DUMMY_GLOBAL_TYPE_A, data_vec1.clone())
+            .add_global_current_op(DUMMY_GLOBAL_TYPE_A, data_vec2.clone());
+        // index = 1 (for the second item)
+        env.regs.set_n(RegA::A8, Reg32::Reg0, Number::from(1u8));
+
+        let op_code = ContractOp::LdG(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(2));
+        env.execute(op_code, true);
+        assert_eq!(env.regs.s16(RegS::from(2)).unwrap().as_ref(), data_vec2.as_slice());
+    }
+
+    #[test]
+    fn test_ldg_fail_index_reg_none() {
+        let mut env = TestEnv::for_genesis().add_global_current_op(DUMMY_GLOBAL_TYPE_A, vec![1, 2]);
+        // Index register a8[0] is deliberately not set (i.e., None)
+        let op_code = ContractOp::LdG(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(2));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(2)).is_none());
+    }
+
+    #[test]
+    fn test_ldg_fail_state_type_missing_in_globals() {
+        // Globals are empty for DUMMY_GLOBAL_TYPE_A
+        let mut env = TestEnv::for_genesis();
+        env.regs.set_n(RegA::A8, Reg32::Reg0, Number::from(0u8));
+        let op_code = ContractOp::LdG(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(2));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(2)).is_none());
+    }
+
+    #[test]
+    fn test_ldg_fail_index_oob() {
+        // 1 item
+        let mut env = TestEnv::for_genesis().add_global_current_op(DUMMY_GLOBAL_TYPE_A, vec![1, 2]);
+        // Request index 1 (OOB for 1 item)
+        env.regs.set_n(RegA::A8, Reg32::Reg0, Number::from(1u8));
+
+        let op_code = ContractOp::LdG(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(2));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(2)).is_none());
+    }
+
+    // LdC (Load Global state from Contract history) Tests
+    #[test]
+    fn test_ldc_success() {
+        let data_vec_hist = vec![0x12, 0x34];
+        let history = vec![(
+            GlobalOrd::genesis(0), // Dummy GlobalOrd
+            RevealedData::new(SmallBlob::try_from(data_vec_hist.clone()).unwrap()),
+        )];
+        // LdC uses contract_state, not current op's state
+        let mut env =
+            TestEnv::for_genesis().set_mock_global_state_history(DUMMY_GLOBAL_TYPE_A, history);
+        // let the depth eq 0
+        env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(1u32));
+
+        let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(3));
+        env.execute(op_code, true);
+        assert_eq!(env.regs.s16(RegS::from(3)).unwrap().as_ref(), data_vec_hist.as_slice());
+    }
+
+    #[test]
+    fn test_ldc_success_at_depth_one() {
+        let data_vec_hist1 = vec![0x01, 0x02];
+        let data_vec_hist2 = vec![0x03, 0x04];
+        let history = vec![
+            (
+                GlobalOrd::genesis(1), // d = 1
+                RevealedData::new(SmallBlob::try_from(data_vec_hist1.clone()).unwrap()),
+            ),
+            (
+                GlobalOrd::genesis(2), // d = 2
+                RevealedData::new(SmallBlob::try_from(data_vec_hist2.clone()).unwrap()),
+            ),
+        ];
+        let mut env =
+            TestEnv::for_genesis().set_mock_global_state_history(DUMMY_GLOBAL_TYPE_A, history);
+        env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(1u32)); // depth = 1
+
+        let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(3));
+        env.execute(op_code, true);
+        assert_eq!(env.regs.s16(RegS::from(3)).unwrap().as_ref(), data_vec_hist1.as_slice());
+
+        env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(2u32)); // depth = 2
+        let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(4));
+        env.execute(op_code, true);
+        assert_eq!(env.regs.s16(RegS::from(4)).unwrap().as_ref(), data_vec_hist2.as_slice());
+    }
+
+    #[test]
+    fn test_ldc_fail_mock_global_access_error() {
+        let mut env = TestEnv::for_genesis().set_mock_fail_global_access(true);
+        env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(0u32));
+        let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(3));
+        // fail!() is called if contract_state.global() errors
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(3)).is_none());
+    }
+
+    #[test]
+    fn test_ldc_fail_depth_reg_none() {
+        let mut env = TestEnv::for_genesis(); // a32[0] (depth_reg) is None
+        let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(3));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(3)).is_none());
+    }
+
+    #[test]
+    fn test_ldc_fail_depth_oob_in_history() {
+        let history =
+            vec![(GlobalOrd::genesis(0), RevealedData::new(SmallBlob::try_from(vec![1]).unwrap()))]; // Only 1 item
+        let mut env =
+            TestEnv::for_genesis().set_mock_global_state_history(DUMMY_GLOBAL_TYPE_A, history);
+        env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(2u32)); // Request depth 2 (OOB)
+
+        let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(3));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(3)).is_none());
+    }
+
+    #[test]
+    fn test_ldc_fail_depth_too_large_for_u24() {
+        let mut env = TestEnv::for_genesis();
+        // Set depth register to a value greater than u24::MAX to test saturation/error handling
+        env.regs
+            .set_n(RegA::A32, Reg32::Reg0, Number::from(u24::MAX.to_u32() + 1));
+
+        let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(3));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(3)).is_none());
+    }
+
+    // LdM (Load Metadata from current op) Tests
+    #[test]
+    fn test_ldm_success() {
+        let meta_bytes = vec![0xDA, 0x7A];
+        let mut env =
+            TestEnv::for_genesis().add_metadata_current_op(DUMMY_META_TYPE_A, meta_bytes.clone());
+
+        let op_code = ContractOp::LdM(DUMMY_META_TYPE_A, RegS::from(4));
+        env.execute(op_code, true);
+        assert_eq!(env.regs.s16(RegS::from(4)).unwrap().as_ref(), meta_bytes.as_slice());
+    }
+
+    #[test]
+    fn test_ldm_fail_meta_type_missing() {
+        let mut env = TestEnv::for_genesis(); // metadata is empty by default
+        let op_code = ContractOp::LdM(DUMMY_META_TYPE_A, RegS::from(4));
+        env.execute(op_code, false);
+        assert!(env.regs.s16(RegS::from(4)).is_none());
     }
 }
