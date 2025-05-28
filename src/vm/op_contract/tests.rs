@@ -122,7 +122,7 @@ impl ContractStateAccess for MockContractState {
     fn global(
         &self,
         ty: GlobalStateType,
-    ) -> Result<GlobalContractState<impl GlobalStateIter + '_>, UnknownGlobalStateType> {
+    ) -> Result<GlobalContractState<impl GlobalStateIter>, UnknownGlobalStateType> {
         if self.fail_global_access {
             return Err(UnknownGlobalStateType(ty));
         }
@@ -988,5 +988,100 @@ mod load_ops {
         let op_code = ContractOp::LdM(DUMMY_META_TYPE_A, RegS::from(4));
         env.execute(op_code, false);
         assert!(env.regs.s16(RegS::from(4)).is_none());
+    }
+}
+
+
+mod sum_verification_ops {
+    use aluvm::data::{MaybeNumber, Number};
+    use aluvm::reg::{Reg32, RegA};
+
+    use super::*;
+
+    // Svs (Sum Verify Same state) Tests
+    #[test]
+    fn test_svs_success_equal_sum() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]) // Prev sum = 30
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![5, 25]); // Owned sum = 30
+        let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, true);
+    }
+
+    #[test]
+    fn test_svs_success_zero_sum_both_empty() {
+        let mut env = TestEnv::for_transition(); // No prev, no owned of this type
+        let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, true); // 0 == 0
+    }
+
+    #[test]
+    fn test_svs_success_zero_sum_with_zero_values() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![0, 0])
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![0]);
+        let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, true); // 0 == 0
+    }
+
+    #[test]
+    fn test_svs_fail_unequal_sum() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]) // Prev sum = 30
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![5, 20]); // Owned sum = 25
+        let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_svs_fail_only_inputs_present() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]); // No owned of this type
+        let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false); // 30 != 0
+    }
+
+    #[test]
+    fn test_svs_fail_only_outputs_present() {
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![5, 25]); // No prev of this type
+        let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false); // 0 != 30
+    }
+
+    #[test]
+    fn test_svs_fail_input_not_fungible() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_structured(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![vec![1]]) // Wrong type for prev
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10]);
+        let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_svs_fail_output_not_fungible() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10])
+            .add_owned_assign_structured(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![vec![1]]); // Wrong type for owned
+        let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_svs_fail_input_sum_overflow() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![u64::MAX, 1]) // Overflow
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10]);
+        let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_svs_fail_output_sum_overflow() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10])
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![u64::MAX, 1]); // Overflow
+        let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
     }
 }
