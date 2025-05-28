@@ -1084,4 +1084,85 @@ mod sum_verification_ops {
         let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         env.execute(op_code, false);
     }
+
+    
+    // SaS (Sum verify Assigned state) Tests
+    #[test]
+    fn test_sas_success() {
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]); // Owned sum = 30
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(30u64)); // Expected sum
+
+        let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, true);
+    }
+
+    #[test]
+    fn test_sas_fail_sum_reg_none() {
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]);
+        // a64[0] is None
+        let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_sas_fail_sum_mismatch() {
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]); // Owned sum = 30
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(31u64)); // Expected sum mismatch
+
+        let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_sas_fail_owned_state_type_missing() {
+        let mut env = TestEnv::for_transition(); // No owned state of this type
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(1u64)); // Expect non-zero sum
+        let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        // owned sum is 0, a64[0] is 1 -> fail
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_sas_success_owned_state_type_missing_and_sum_reg_zero() {
+        let mut env = TestEnv::for_transition();
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(0u64)); // Expect zero sum
+
+        let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        // owned sum is 0, a64[0] is 0 -> success
+        env.execute(op_code, true);
+    }
+
+    #[test]
+    fn test_sas_fail_owned_state_not_fungible() {
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_structured(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![vec![1]]); // Wrong type
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(0u64));
+
+        let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_sas_fail_owned_state_contains_zero_value() {
+        // SaS specifically fails if any of the outputted fungible values are zero
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 0, 20]); // Contains 0
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(30u64));
+
+        let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_sas_fail_owned_sum_overflow() {
+        let mut env = TestEnv::for_transition()
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![u64::MAX, 1]); // Overflow
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(10u64)); // Doesn't matter due to overflow
+
+        let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
 }
