@@ -1353,3 +1353,266 @@ mod vts_op {
         env.execute(op_code, false);
     }
 }
+
+mod fail_op_test {
+    use aluvm::reg::{Reg32, RegA};
+
+    use super::*;
+
+    #[test]
+    fn test_fail_op_unknown_opcode() {
+        let mut env = TestEnv::for_genesis();
+        let unknown_opcode = 0xFF;
+        let op_code = ContractOp::Fail(unknown_opcode, core::marker::PhantomData);
+        env.execute(op_code, false);
+    }
+}
+mod instruction_set_impl {
+    use std::collections::BTreeSet;
+
+    use aluvm::isa::InstructionSet;
+    use aluvm::reg::{Reg, Reg32, RegA, RegS};
+
+    use super::*;
+
+    #[test]
+    fn test_isa_ids() {
+        assert_eq!(ContractOp::<MockContractState>::isa_ids(), IsaSeg::with("RGB"));
+    }
+
+    #[test]
+    fn test_src_regs() {
+       
+       
+        let op_ldp = ContractOp::<MockContractState>::LdP(
+            DUMMY_ASSIGN_TYPE_DATA,
+            Reg16::Reg0,
+            RegS::from(0),
+        );
+        let expected_ldp = bset![Reg::A(RegA::A16, Reg32::Reg0)];
+        assert_eq!(op_ldp.src_regs(), expected_ldp);
+
+       
+        let op_ldf = ContractOp::<MockContractState>::LdF(
+            DUMMY_ASSIGN_TYPE_FUNGIBLE,
+            Reg16::Reg1,
+            Reg16::Reg2,
+        );
+        let expected_ldf = bset![Reg::A(RegA::A16, Reg32::Reg1)];
+        assert_eq!(op_ldf.src_regs(), expected_ldf);
+
+       
+        let op_ldg =
+            ContractOp::<MockContractState>::LdG(DUMMY_GLOBAL_TYPE_A, Reg16::Reg3, RegS::from(1));
+        let expected_ldg = bset![Reg::A(RegA::A8, Reg32::Reg3)];
+        assert_eq!(op_ldg.src_regs(), expected_ldg);
+
+       
+        let op_ldc =
+            ContractOp::<MockContractState>::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg4, RegS::from(2));
+        let expected_ldc = bset![Reg::A(RegA::A32, Reg32::Reg4)];
+        assert_eq!(op_ldc.src_regs(), expected_ldc);
+
+       
+        let ops_empty_src = vec![
+            ContractOp::<MockContractState>::CnP(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg32::Reg0),
+            ContractOp::<MockContractState>::CnS(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg32::Reg0),
+            ContractOp::<MockContractState>::CnG(DUMMY_GLOBAL_TYPE_A, Reg32::Reg0),
+            ContractOp::<MockContractState>::CnC(DUMMY_GLOBAL_TYPE_A, Reg32::Reg0),
+            ContractOp::<MockContractState>::LdM(DUMMY_META_TYPE_A, RegS::from(0)),
+            ContractOp::<MockContractState>::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE),
+            ContractOp::<MockContractState>::Vts(RegS::from(0)),
+            ContractOp::<MockContractState>::Fail(
+                0,
+                core::marker::PhantomData::<MockContractState>,
+            ),
+        ];
+        for op in ops_empty_src {
+            assert_eq!(op.src_regs(), BTreeSet::new(), "Failed for {:?}", op);
+        }
+
+       
+        let ops_a64_src = vec![
+            ContractOp::<MockContractState>::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE),
+            ContractOp::<MockContractState>::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE),
+        ];
+        let expected_a64_src = bset![Reg::A(RegA::A64, Reg32::Reg0)];
+        for op in ops_a64_src {
+            assert_eq!(op.src_regs(), expected_a64_src, "Failed for {:?}", op);
+        }
+       
+    }
+
+    #[test]
+    fn test_dst_regs() {
+        // CnG
+        let op_cng = ContractOp::<MockContractState>::CnG(DUMMY_GLOBAL_TYPE_A, Reg32::Reg5);
+        let expected_cng = bset![Reg::A(RegA::A8, Reg32::Reg5)];
+        assert_eq!(op_cng.dst_regs(), expected_cng);
+
+        // CnP, CnS, CnC
+        let ops_a16_dst = vec![
+            (
+                ContractOp::<MockContractState>::CnP(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg32::Reg6),
+                Reg32::Reg6,
+            ),
+            (
+                ContractOp::<MockContractState>::CnS(DUMMY_ASSIGN_TYPE_DATA, Reg32::Reg7),
+                Reg32::Reg7,
+            ),
+            (ContractOp::<MockContractState>::CnC(DUMMY_GLOBAL_TYPE_B, Reg32::Reg8), Reg32::Reg8),
+        ];
+        for (op, reg_idx) in ops_a16_dst {
+            let expected = bset![Reg::A(RegA::A16, reg_idx)];
+            assert_eq!(op.dst_regs(), expected, "Failed for {:?}", op);
+        }
+
+        // LdF
+        let op_ldf = ContractOp::<MockContractState>::LdF(
+            DUMMY_ASSIGN_TYPE_FUNGIBLE,
+            Reg16::Reg0,
+            Reg16::Reg9,
+        );
+         // Reg16::Reg9 -> Reg32::Reg9
+        let expected_ldf = bset![Reg::A(RegA::A64, Reg32::Reg9)];
+        assert_eq!(op_ldf.dst_regs(), expected_ldf);
+
+        // LdG, LdS, LdP, LdC, LdM
+        let ops_s_dst = vec![
+            (
+                ContractOp::<MockContractState>::LdG(
+                    DUMMY_GLOBAL_TYPE_A,
+                    Reg16::Reg0,
+                    RegS::from(10),
+                ),
+                RegS::from(10),
+            ),
+            (
+                ContractOp::<MockContractState>::LdS(
+                    DUMMY_ASSIGN_TYPE_DATA,
+                    Reg16::Reg0,
+                    RegS::from(11),
+                ),
+                RegS::from(11),
+            ),
+            (
+                ContractOp::<MockContractState>::LdP(
+                    DUMMY_ASSIGN_TYPE_RIGHTS,
+                    Reg16::Reg0,
+                    RegS::from(12),
+                ),
+                RegS::from(12),
+            ),
+            (
+                ContractOp::<MockContractState>::LdC(
+                    DUMMY_GLOBAL_TYPE_B,
+                    Reg16::Reg0,
+                    RegS::from(13),
+                ),
+                RegS::from(13),
+            ),
+            (
+                ContractOp::<MockContractState>::LdM(DUMMY_META_TYPE_A, RegS::from(14)),
+                RegS::from(14),
+            ),
+        ];
+        for (op, reg_s_idx) in ops_s_dst {
+            let expected = bset![Reg::S(reg_s_idx)];
+            assert_eq!(op.dst_regs(), expected, "Failed for {:?}", op);
+        }
+
+        let ops_empty_dst = vec![
+            ContractOp::<MockContractState>::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE),
+            ContractOp::<MockContractState>::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE),
+            ContractOp::<MockContractState>::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE),
+            ContractOp::<MockContractState>::Fail(
+                0,
+                core::marker::PhantomData::<MockContractState>,
+            ),
+        ];
+        for op in ops_empty_dst {
+            assert_eq!(op.dst_regs(), BTreeSet::new(), "Failed for {:?}", op);
+        }
+
+        // Vts
+        let op_vts = ContractOp::<MockContractState>::Vts(RegS::from(15));
+        let expected_vts = bset![Reg::S(RegS::from(15))];
+        assert_eq!(op_vts.dst_regs(), expected_vts);
+
+    }
+
+    #[test]
+    fn test_complexity() {
+        // Cn*
+        assert_eq!(
+            ContractOp::CnP::<MockContractState>(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg32::Reg0)
+                .complexity(),
+            2
+        );
+        // Ld* (except LdM)
+        assert_eq!(
+            ContractOp::LdP::<MockContractState>(
+                DUMMY_ASSIGN_TYPE_DATA,
+                Reg16::Reg0,
+                RegS::from(0)
+            )
+            .complexity(),
+            8
+        );
+        // LdM
+        assert_eq!(
+            ContractOp::LdM::<MockContractState>(DUMMY_META_TYPE_A, RegS::from(0)).complexity(),
+            6
+        );
+        // S*s
+        assert_eq!(
+            ContractOp::Svs::<MockContractState>(DUMMY_ASSIGN_TYPE_FUNGIBLE).complexity(),
+            20
+        );
+        // Vts
+        assert_eq!(ContractOp::Vts::<MockContractState>(RegS::from(0)).complexity(), 512);
+        // Fail
+        assert_eq!(
+            ContractOp::Fail(0, core::marker::PhantomData::<MockContractState>).complexity(),
+            u64::MAX
+        );
+
+        assert_eq!(
+            ContractOp::LdF::<MockContractState>(
+                DUMMY_ASSIGN_TYPE_FUNGIBLE,
+                Reg16::Reg0,
+                Reg16::Reg0
+            )
+            .complexity(),
+            8
+        );
+        assert_eq!(
+            ContractOp::LdS::<MockContractState>(
+                DUMMY_ASSIGN_TYPE_DATA,
+                Reg16::Reg0,
+                RegS::from(0)
+            )
+            .complexity(),
+            8
+        );
+        assert_eq!(
+            ContractOp::LdG::<MockContractState>(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(0))
+                .complexity(),
+            8
+        );
+        assert_eq!(
+            ContractOp::LdC::<MockContractState>(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(0))
+                .complexity(),
+            8
+        );
+
+        assert_eq!(
+            ContractOp::Sas::<MockContractState>(DUMMY_ASSIGN_TYPE_FUNGIBLE).complexity(),
+            20
+        );
+        assert_eq!(
+            ContractOp::Sps::<MockContractState>(DUMMY_ASSIGN_TYPE_FUNGIBLE).complexity(),
+            20
+        );
+    }
+}
