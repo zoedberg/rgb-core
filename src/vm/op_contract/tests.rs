@@ -1085,7 +1085,6 @@ mod sum_verification_ops {
         env.execute(op_code, false);
     }
 
-    
     // SaS (Sum verify Assigned state) Tests
     #[test]
     fn test_sas_success() {
@@ -1163,6 +1162,76 @@ mod sum_verification_ops {
         env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(10u64)); // Doesn't matter due to overflow
 
         let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    // SpS (Sum verify Previous state) Tests
+    #[test]
+    fn test_sps_success() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![15, 25]); // Prev sum = 40
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(40u64)); // Expected sum
+
+        let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, true);
+    }
+
+    #[test]
+    fn test_sps_fail_sum_reg_none() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![15, 25]);
+        // a64[0] is None
+        let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_sps_fail_sum_mismatch() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![15, 25]); // Prev sum = 40
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(41u64)); // Expected different
+
+        let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_sps_fail_prev_state_type_missing() {
+        let mut env = TestEnv::for_transition(); // No prev state of this type
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(1u64)); // Expect non-zero sum
+
+        let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        // prev sum is 0, a64[0] is 1 -> fail
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_sps_success_prev_state_type_missing_and_sum_reg_zero() {
+        let mut env = TestEnv::for_transition();
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(0u64)); // Expect zero sum
+
+        let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        // prev sum is 0, a64[0] is 0 -> success
+        env.execute(op_code, true);
+    }
+
+    #[test]
+    fn test_sps_fail_prev_state_not_fungible() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_structured(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![vec![1]]); // Wrong type
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(0u64));
+
+        let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_sps_fail_prev_sum_overflow() {
+        let mut env = TestEnv::for_transition()
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![u64::MAX, 1]); // Overflow
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(10u64));
+
+        let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         env.execute(op_code, false);
     }
 }
