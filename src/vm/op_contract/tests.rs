@@ -1235,3 +1235,121 @@ mod sum_verification_ops {
         env.execute(op_code, false);
     }
 }
+
+mod vts_op {
+    use aluvm::data::ByteStr;
+    use amplify::Bytes64;
+    use secp256k1::{generate_keypair, rand, Message as SecpMessage, Secp256k1};
+
+    use super::*;
+
+    #[test]
+    fn test_vts_success() {
+        let mut env = TestEnv::for_transition();
+        let secp = Secp256k1::new();
+        let (secret_key, public_key) = generate_keypair(&mut rand::thread_rng());
+        let public_key_bytes_compact = public_key.serialize();
+        env.regs
+            .set_s16(u4::with(0), ByteStr::with(&public_key_bytes_compact[..]));
+
+        let transition_op_val_mut = env.transition_val.as_mut().unwrap();
+        let transition_id_bytes = transition_op_val_mut.id().into_inner().into_inner();
+        let message = SecpMessage::from_digest_slice(&transition_id_bytes).expect("32 bytes");
+        let sig = secp.sign_ecdsa(&message, &secret_key);
+        transition_op_val_mut.signature = Some(Bytes64::from_array(sig.serialize_compact()).into());
+
+        let op_code = ContractOp::Vts(RegS::from(0));
+        env.execute(op_code, true);
+    }
+    
+    #[test]
+    fn test_vts_fail_no_signature_in_transition() {
+        let mut env = TestEnv::for_transition();
+        let (_secret_key, public_key) = generate_keypair(&mut rand::thread_rng());
+        let public_key_bytes_compact = public_key.serialize();
+        env.regs
+            .set_s16(u4::with(0), ByteStr::with(&public_key_bytes_compact[..]));
+        // env.transition_val.as_mut().unwrap().signature is already None by dummy_transition
+
+        let op_code = ContractOp::Vts(RegS::from(0));
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_vts_fail_pubkey_reg_none() {
+        let mut env = TestEnv::for_transition(); // s16[0] is None (pubkey reg)
+        let secp = Secp256k1::new();
+        let (secret_key, _public_key) = generate_keypair(&mut rand::thread_rng());
+
+        let transition_op_val_mut = env.transition_val.as_mut().unwrap();
+        let transition_id_bytes = transition_op_val_mut.id().into_inner().into_inner();
+        let message = SecpMessage::from_digest_slice(&transition_id_bytes).expect("32 bytes");
+        let sig = secp.sign_ecdsa(&message, &secret_key);
+        transition_op_val_mut.signature = Some(Bytes64::from_array(sig.serialize_compact()).into());
+
+        let op_code = ContractOp::Vts(RegS::from(0));
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_vts_fail_invalid_pubkey_format() {
+        let mut env = TestEnv::for_transition();
+        env.regs
+            .set_s16(u4::with(0), ByteStr::with(&[0x00, 0x01, 0x02])); 
+        let secp = Secp256k1::new();
+        let (secret_key, _public_key) = generate_keypair(&mut rand::thread_rng());
+        let transition_op_val_mut = env.transition_val.as_mut().unwrap();
+        let transition_id_bytes = transition_op_val_mut.id().into_inner().into_inner();
+        let message = SecpMessage::from_digest_slice(&transition_id_bytes).expect("32 bytes");
+        let sig = secp.sign_ecdsa(&message, &secret_key);
+        transition_op_val_mut.signature = Some(Bytes64::from_array(sig.serialize_compact()).into());
+
+        let op_code = ContractOp::Vts(RegS::from(0));
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_vts_fail_invalid_signature_format() {
+        let mut env = TestEnv::for_transition();
+        let (_secret_key, public_key) = generate_keypair(&mut rand::thread_rng());
+        let public_key_bytes_compact = public_key.serialize();
+        env.regs
+            .set_s16(u4::with(0), ByteStr::with(&public_key_bytes_compact[..]));
+        let transition_op_val_mut = env.transition_val.as_mut().unwrap();
+        transition_op_val_mut.signature = Some(Bytes64::from_array([0u8; 64]).into());
+
+        let op_code = ContractOp::Vts(RegS::from(0));
+        env.execute(op_code, false);
+    }
+
+    #[test]
+    fn test_vts_fail_signature_mismatch() {
+        let mut env = TestEnv::for_transition();
+        let secp = Secp256k1::new();
+        let (_sk1, pk1) = generate_keypair(&mut rand::thread_rng()); 
+        let (sk2, _pk2) = generate_keypair(&mut rand::thread_rng()); 
+        env.regs
+            .set_s16(u4::with(0), ByteStr::with(&pk1.serialize()[..]));
+
+        let transition_op_val_mut = env.transition_val.as_mut().unwrap();
+        let transition_id_bytes = transition_op_val_mut.id().into_inner().into_inner();
+        let message = SecpMessage::from_digest_slice(&transition_id_bytes).expect("32 bytes");
+        let sig = secp.sign_ecdsa(&message, &sk2); 
+        transition_op_val_mut.signature = Some(Bytes64::from_array(sig.serialize_compact()).into());
+
+        let op_code = ContractOp::Vts(RegS::from(0));
+        env.execute(op_code, false); 
+    }
+
+    #[test]
+    fn test_vts_fail_on_genesis() {
+        let mut env = TestEnv::for_genesis(); // Operation is Genesis
+        let (_secret_key, public_key) = generate_keypair(&mut rand::thread_rng());
+        let public_key_bytes_compact = public_key.serialize();
+        env.regs
+            .set_s16(u4::with(0), ByteStr::with(&public_key_bytes_compact[..]));
+
+        let op_code = ContractOp::Vts(RegS::from(0));
+        env.execute(op_code, false);
+    }
+}
