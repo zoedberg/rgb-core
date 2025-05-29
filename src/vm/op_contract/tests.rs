@@ -95,7 +95,7 @@ impl<'a> GlobalStateIter for MockGlobalStateIter<'a> {
             panic!("MockGlobalStateIter cannot be reset to depth 0");
         }
 
-        let target_idx_for_last_0based = depth_1based.to_usize() - 1; // Convert 1-based to 0-indexed
+        let target_idx_for_last_0based = depth_1based.to_usize() - 1;
 
         if target_idx_for_last_0based < self.total_size {
             // The item at target_idx_for_last_0based should become the "last" item.
@@ -108,7 +108,7 @@ impl<'a> GlobalStateIter for MockGlobalStateIter<'a> {
             // e.g., total_size=1. reset(depth_1based=2). target_idx_for_last_0based=1.
             // 1 < 1 is false. Comes here.
             self.last_item_cache = None;
-            self.current_pos = self.total_size; // Exhausted
+            self.current_pos = self.total_size;
         }
     }
 }
@@ -325,14 +325,6 @@ impl TestEnv {
         }
     }
 
-    fn set_contract_id(mut self, contract_id: ContractId) -> Self {
-        self.contract_id = contract_id;
-        if let Some(t) = self.transition_val.as_mut() {
-            t.contract_id = contract_id;
-        }
-        self
-    }
-
     fn add_global_current_op(mut self, global_type: GlobalStateType, data: Vec<u8>) -> Self {
         let revealed_data = RevealedData::new(SmallBlob::try_from(data).unwrap());
         if let Some(g) = self.genesis_val.as_mut() {
@@ -483,7 +475,7 @@ mod count_ops {
 
     use super::*;
 
-    // CnP Tests (Count Previous state)
+    // CnP (Count Previous state)
     #[test]
     fn test_cnp_found_multiple() {
         let mut env = TestEnv::for_transition().add_prev_assign_fungible(
@@ -513,7 +505,7 @@ mod count_ops {
         assert_eq!(env.regs.get_n(RegA::A16, Reg32::Reg0), MaybeNumber::none());
     }
 
-    // CnS Tests (Count Same [owned] state)
+    // CnS (Count Same [owned] state)
     #[test]
     fn test_cns_found_multiple_transition() {
         let mut env = TestEnv::for_transition().add_owned_assign_structured(
@@ -542,10 +534,7 @@ mod count_ops {
         assert_eq!(env.regs.get_n(RegA::A16, Reg32::Reg0), MaybeNumber::none());
     }
 
-    // CnS for Genesis (needs specific handling for GenesisSeal if we strictly test owned
-    // assignments) For simplicity, if `add_owned_assign_...` for genesis is too complex due to
-    // seal types, we can test with an empty owned assignment for genesis, which is a valid
-    // case.
+    // CnS for Genesis
     #[test]
     fn test_cns_genesis_type_not_found() {
         let mut env = TestEnv::for_genesis();
@@ -554,7 +543,7 @@ mod count_ops {
         assert_eq!(env.regs.get_n(RegA::A16, Reg32::Reg0), MaybeNumber::none());
     }
 
-    // CnG Tests (Count Next [current op's] Global state)
+    // CnG (Count Next [current op's] Global state)
     #[test]
     fn test_cng_found_multiple() {
         let mut env = TestEnv::for_genesis()
@@ -581,7 +570,7 @@ mod count_ops {
         assert_eq!(env.regs.get_n(RegA::A8, Reg32::Reg0), MaybeNumber::none());
     }
 
-    // CnC Tests (Count Contract's [historical] Global state)
+    // CnC (Count Contract's [historical] Global state)
     #[test]
     fn test_cnc_found_multiple() {
         let history = vec![
@@ -631,13 +620,13 @@ mod load_ops {
 
     use super::*;
 
-    // LdP (Load Previous structured state) Tests
+    // LdP (Load Previous structured state)
     #[test]
     fn test_ldp_success_revealed() {
         let data_vec = vec![0xAB, 0xCD, 0xEF];
         let mut env = TestEnv::for_transition()
             .add_prev_assign_structured(DUMMY_ASSIGN_TYPE_DATA, vec![data_vec.clone()]);
-        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16)); // index = 0
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
 
         let op_code = ContractOp::LdP(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(0));
         env.execute(op_code, true);
@@ -670,7 +659,7 @@ mod load_ops {
 
     #[test]
     fn test_ldp_fail_index_reg_none() {
-        let mut env = TestEnv::for_transition(); // a16[0] (index_reg) is None
+        let mut env = TestEnv::for_transition();
         let op_code = ContractOp::LdP(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(0));
         env.execute(op_code, false);
         assert!(env.regs.s16(RegS::from(0)).is_none());
@@ -678,7 +667,7 @@ mod load_ops {
 
     #[test]
     fn test_ldp_fail_state_type_missing_in_prev() {
-        let mut env = TestEnv::for_transition(); // prev_assignments is empty
+        let mut env = TestEnv::for_transition();
         env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
         let op_code = ContractOp::LdP(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(0));
         env.execute(op_code, false);
@@ -700,7 +689,7 @@ mod load_ops {
 
     #[test]
     fn test_ldp_fail_wrong_state_type_in_prev() {
-        // prev_state has DUMMY_ASSIGN_TYPE_DATA, but it's Fungible, not Structured for LdP
+        // prev_state has DUMMY_ASSIGN_TYPE_DATA, but it's Fungible, not structured for LdP
         let mut env =
             TestEnv::for_transition().add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_DATA, vec![100]);
         env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(0u16));
@@ -710,7 +699,7 @@ mod load_ops {
         assert!(env.regs.s16(RegS::from(0)).is_none());
     }
 
-    // LdS (Load Same/owned structured state) Tests
+    // LdS (Load Same/owned structured state)
     #[test]
     fn test_lds_success_revealed() {
         let data_vec = vec![0xBE, 0xEF];
@@ -725,7 +714,7 @@ mod load_ops {
 
     #[test]
     fn test_lds_fail_index_reg_none() {
-        let mut env = TestEnv::for_transition(); // a16[0] is None
+        let mut env = TestEnv::for_transition();
         let op_code = ContractOp::LdS(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(1));
         env.execute(op_code, false);
         assert!(env.regs.s16(RegS::from(1)).is_none());
@@ -744,7 +733,7 @@ mod load_ops {
     fn test_lds_fail_index_oob() {
         let mut env = TestEnv::for_transition()
             .add_owned_assign_structured(DUMMY_ASSIGN_TYPE_DATA, vec![vec![1]]);
-        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(1u16)); // Request index 1
+        env.regs.set_n(RegA::A16, Reg32::Reg0, Number::from(1u16));
         let op_code = ContractOp::LdS(DUMMY_ASSIGN_TYPE_DATA, Reg16::Reg0, RegS::from(1));
         env.execute(op_code, false);
         assert!(env.regs.s16(RegS::from(1)).is_none());
@@ -761,7 +750,7 @@ mod load_ops {
         assert!(env.regs.s16(RegS::from(1)).is_none());
     }
 
-    // LdF (Load Same/owned Fungible state) Tests
+    // LdF (Load Same/owned Fungible state)
     #[test]
     fn test_ldf_success_revealed() {
         let fungible_val = 777u64;
@@ -817,7 +806,7 @@ mod load_ops {
         assert!(env.regs.get_n(RegA::A64, Reg32::Reg0).is_none());
     }
 
-    // LdG (Load Global state from current op) Tests
+    // LdG (Load Global state from current op)
     #[test]
     fn test_ldg_success() {
         let data_vec = vec![0xC0, 0xDE];
@@ -877,7 +866,7 @@ mod load_ops {
         assert!(env.regs.s16(RegS::from(2)).is_none());
     }
 
-    // LdC (Load Global state from Contract history) Tests
+    // LdC (Load Global state from Contract history)
     #[test]
     fn test_ldc_success() {
         let data_vec_hist = vec![0x12, 0x34];
@@ -912,13 +901,13 @@ mod load_ops {
         ];
         let mut env =
             TestEnv::for_genesis().set_mock_global_state_history(DUMMY_GLOBAL_TYPE_A, history);
-        env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(1u32)); // depth = 1
+        env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(1u32));
 
         let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(3));
         env.execute(op_code, true);
         assert_eq!(env.regs.s16(RegS::from(3)).unwrap().as_ref(), data_vec_hist1.as_slice());
 
-        env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(2u32)); // depth = 2
+        env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(2u32));
         let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(4));
         env.execute(op_code, true);
         assert_eq!(env.regs.s16(RegS::from(4)).unwrap().as_ref(), data_vec_hist2.as_slice());
@@ -936,7 +925,7 @@ mod load_ops {
 
     #[test]
     fn test_ldc_fail_depth_reg_none() {
-        let mut env = TestEnv::for_genesis(); // a32[0] (depth_reg) is None
+        let mut env = TestEnv::for_genesis();
         let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(3));
         env.execute(op_code, false);
         assert!(env.regs.s16(RegS::from(3)).is_none());
@@ -945,10 +934,10 @@ mod load_ops {
     #[test]
     fn test_ldc_fail_depth_oob_in_history() {
         let history =
-            vec![(GlobalOrd::genesis(0), RevealedData::new(SmallBlob::try_from(vec![1]).unwrap()))]; // Only 1 item
+            vec![(GlobalOrd::genesis(0), RevealedData::new(SmallBlob::try_from(vec![1]).unwrap()))];
         let mut env =
             TestEnv::for_genesis().set_mock_global_state_history(DUMMY_GLOBAL_TYPE_A, history);
-        env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(2u32)); // Request depth 2 (OOB)
+        env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(2u32));
 
         let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(3));
         env.execute(op_code, false);
@@ -959,6 +948,7 @@ mod load_ops {
     fn test_ldc_fail_depth_too_large_for_u24() {
         let mut env = TestEnv::for_genesis();
         // Set depth register to a value greater than u24::MAX to test saturation/error handling
+        // NOTE: depth starts from 1, not 0 !!!
         env.regs
             .set_n(RegA::A32, Reg32::Reg0, Number::from(u24::MAX.to_u32() + 1));
 
@@ -967,7 +957,7 @@ mod load_ops {
         assert!(env.regs.s16(RegS::from(3)).is_none());
     }
 
-    // LdM (Load Metadata from current op) Tests
+    // LdM (Load Metadata from current op)
     #[test]
     fn test_ldm_success() {
         let meta_bytes = vec![0xDA, 0x7A];
@@ -981,7 +971,7 @@ mod load_ops {
 
     #[test]
     fn test_ldm_fail_meta_type_missing() {
-        let mut env = TestEnv::for_genesis(); // metadata is empty by default
+        let mut env = TestEnv::for_genesis();
         let op_code = ContractOp::LdM(DUMMY_META_TYPE_A, RegS::from(4));
         env.execute(op_code, false);
         assert!(env.regs.s16(RegS::from(4)).is_none());
@@ -994,21 +984,21 @@ mod sum_verification_ops {
 
     use super::*;
 
-    // Svs (Sum Verify Same state) Tests
+    // Svs (Sum Verify Same state)
     #[test]
     fn test_svs_success_equal_sum() {
         let mut env = TestEnv::for_transition()
             .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]) // Prev sum = 30
-            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![5, 25]); // Owned sum = 30
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![5, 25]);
         let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         env.execute(op_code, true);
     }
 
     #[test]
     fn test_svs_success_zero_sum_both_empty() {
-        let mut env = TestEnv::for_transition(); // No prev, no owned of this type
+        let mut env = TestEnv::for_transition();
         let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
-        env.execute(op_code, true); // 0 == 0
+        env.execute(op_code, true);
     }
 
     #[test]
@@ -1017,14 +1007,14 @@ mod sum_verification_ops {
             .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![0, 0])
             .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![0]);
         let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
-        env.execute(op_code, true); // 0 == 0
+        env.execute(op_code, true);
     }
 
     #[test]
     fn test_svs_fail_unequal_sum() {
         let mut env = TestEnv::for_transition()
             .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]) // Prev sum = 30
-            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![5, 20]); // Owned sum = 25
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![5, 20]);
         let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         env.execute(op_code, false);
     }
@@ -1032,17 +1022,17 @@ mod sum_verification_ops {
     #[test]
     fn test_svs_fail_only_inputs_present() {
         let mut env = TestEnv::for_transition()
-            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]); // No owned of this type
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]);
         let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
-        env.execute(op_code, false); // 30 != 0
+        env.execute(op_code, false);
     }
 
     #[test]
     fn test_svs_fail_only_outputs_present() {
         let mut env = TestEnv::for_transition()
-            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![5, 25]); // No prev of this type
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![5, 25]);
         let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
-        env.execute(op_code, false); // 0 != 30
+        env.execute(op_code, false);
     }
 
     #[test]
@@ -1058,7 +1048,7 @@ mod sum_verification_ops {
     fn test_svs_fail_output_not_fungible() {
         let mut env = TestEnv::for_transition()
             .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10])
-            .add_owned_assign_structured(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![vec![1]]); // Wrong type for owned
+            .add_owned_assign_structured(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![vec![1]]);
         let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         env.execute(op_code, false);
     }
@@ -1076,17 +1066,17 @@ mod sum_verification_ops {
     fn test_svs_fail_output_sum_overflow() {
         let mut env = TestEnv::for_transition()
             .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10])
-            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![u64::MAX, 1]); // Overflow
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![u64::MAX, 1]);
         let op_code = ContractOp::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         env.execute(op_code, false);
     }
 
-    // SaS (Sum verify Assigned state) Tests
+    // SaS (Sum verify Assigned state)
     #[test]
     fn test_sas_success() {
         let mut env = TestEnv::for_transition()
-            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]); // Owned sum = 30
-        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(30u64)); // Expected sum
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]);
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(30u64));
 
         let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         env.execute(op_code, true);
@@ -1104,8 +1094,8 @@ mod sum_verification_ops {
     #[test]
     fn test_sas_fail_sum_mismatch() {
         let mut env = TestEnv::for_transition()
-            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]); // Owned sum = 30
-        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(31u64)); // Expected sum mismatch
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 20]);
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(31u64));
 
         let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         env.execute(op_code, false);
@@ -1113,8 +1103,8 @@ mod sum_verification_ops {
 
     #[test]
     fn test_sas_fail_owned_state_type_missing() {
-        let mut env = TestEnv::for_transition(); // No owned state of this type
-        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(1u64)); // Expect non-zero sum
+        let mut env = TestEnv::for_transition();
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(1u64));
         let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         // owned sum is 0, a64[0] is 1 -> fail
         env.execute(op_code, false);
@@ -1123,7 +1113,7 @@ mod sum_verification_ops {
     #[test]
     fn test_sas_success_owned_state_type_missing_and_sum_reg_zero() {
         let mut env = TestEnv::for_transition();
-        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(0u64)); // Expect zero sum
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(0u64));
 
         let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         // owned sum is 0, a64[0] is 0 -> success
@@ -1133,7 +1123,7 @@ mod sum_verification_ops {
     #[test]
     fn test_sas_fail_owned_state_not_fungible() {
         let mut env = TestEnv::for_transition()
-            .add_owned_assign_structured(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![vec![1]]); // Wrong type
+            .add_owned_assign_structured(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![vec![1]]);
         env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(0u64));
 
         let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
@@ -1144,7 +1134,7 @@ mod sum_verification_ops {
     fn test_sas_fail_owned_state_contains_zero_value() {
         // SaS specifically fails if any of the outputted fungible values are zero
         let mut env = TestEnv::for_transition()
-            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 0, 20]); // Contains 0
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![10, 0, 20]);
         env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(30u64));
 
         let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
@@ -1154,19 +1144,19 @@ mod sum_verification_ops {
     #[test]
     fn test_sas_fail_owned_sum_overflow() {
         let mut env = TestEnv::for_transition()
-            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![u64::MAX, 1]); // Overflow
-        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(10u64)); // Doesn't matter due to overflow
+            .add_owned_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![u64::MAX, 1]);
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(10u64));
 
         let op_code = ContractOp::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         env.execute(op_code, false);
     }
 
-    // SpS (Sum verify Previous state) Tests
+    // SpS (Sum verify Previous state)
     #[test]
     fn test_sps_success() {
         let mut env = TestEnv::for_transition()
-            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![15, 25]); // Prev sum = 40
-        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(40u64)); // Expected sum
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![15, 25]);
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(40u64));
 
         let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         env.execute(op_code, true);
@@ -1184,8 +1174,8 @@ mod sum_verification_ops {
     #[test]
     fn test_sps_fail_sum_mismatch() {
         let mut env = TestEnv::for_transition()
-            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![15, 25]); // Prev sum = 40
-        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(41u64)); // Expected different
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![15, 25]);
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(41u64));
 
         let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         env.execute(op_code, false);
@@ -1193,8 +1183,8 @@ mod sum_verification_ops {
 
     #[test]
     fn test_sps_fail_prev_state_type_missing() {
-        let mut env = TestEnv::for_transition(); // No prev state of this type
-        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(1u64)); // Expect non-zero sum
+        let mut env = TestEnv::for_transition();
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(1u64));
 
         let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         // prev sum is 0, a64[0] is 1 -> fail
@@ -1204,7 +1194,7 @@ mod sum_verification_ops {
     #[test]
     fn test_sps_success_prev_state_type_missing_and_sum_reg_zero() {
         let mut env = TestEnv::for_transition();
-        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(0u64)); // Expect zero sum
+        env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(0u64));
 
         let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
         // prev sum is 0, a64[0] is 0 -> success
@@ -1214,7 +1204,7 @@ mod sum_verification_ops {
     #[test]
     fn test_sps_fail_prev_state_not_fungible() {
         let mut env = TestEnv::for_transition()
-            .add_prev_assign_structured(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![vec![1]]); // Wrong type
+            .add_prev_assign_structured(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![vec![1]]);
         env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(0u64));
 
         let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
@@ -1224,7 +1214,7 @@ mod sum_verification_ops {
     #[test]
     fn test_sps_fail_prev_sum_overflow() {
         let mut env = TestEnv::for_transition()
-            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![u64::MAX, 1]); // Overflow
+            .add_prev_assign_fungible(DUMMY_ASSIGN_TYPE_FUNGIBLE, vec![u64::MAX, 1]);
         env.regs.set_n(RegA::A64, Reg32::Reg0, Number::from(10u64));
 
         let op_code = ContractOp::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE);
@@ -1273,7 +1263,7 @@ mod vts_op {
 
     #[test]
     fn test_vts_fail_pubkey_reg_none() {
-        let mut env = TestEnv::for_transition(); // s16[0] is None (pubkey reg)
+        let mut env = TestEnv::for_transition();
         let secp = Secp256k1::new();
         let (secret_key, _public_key) = generate_keypair(&mut rand::thread_rng());
 
@@ -1339,7 +1329,7 @@ mod vts_op {
 
     #[test]
     fn test_vts_fail_on_genesis() {
-        let mut env = TestEnv::for_genesis(); // Operation is Genesis
+        let mut env = TestEnv::for_genesis();
         let (_secret_key, public_key) = generate_keypair(&mut rand::thread_rng());
         let public_key_bytes_compact = public_key.serialize();
         env.regs
