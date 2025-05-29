@@ -1,20 +1,17 @@
 use std::borrow::Borrow;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
-use std::iter;
 use std::num::NonZeroU32;
 use std::rc::Rc;
 
-use aluvm::data::{ByteStr, MaybeNumber, Number};
+use aluvm::data::{ByteStr, MaybeNumber};
 use aluvm::isa::ExecStep;
 use aluvm::library::LibSite;
-use aluvm::reg::{CoreRegs, Reg, Reg16, Reg32, RegA, RegF, RegR, RegS};
+use aluvm::reg::{CoreRegs, Reg16, Reg32, RegA, RegS};
 use amplify::confinement::{NonEmptyOrdSet, NonEmptyVec, SmallBlob, SmallOrdMap};
 use amplify::num::u24;
-use amplify::{Bytes64, Wrapper};
+use amplify::Wrapper;
 use bp::{Outpoint, Txid};
-use commit_verify::StrictHash;
-use secp256k1::{generate_keypair, rand, Secp256k1};
 use strict_encoding::StrictDumb;
 
 use super::*;
@@ -27,7 +24,7 @@ use crate::vm::{
 use crate::{
     schema, seal, Assign, AssignmentType, Assignments, BundleId, ChainNet, ContractId, Ffv,
     FungibleState, Genesis, GenesisSeal, GlobalState, GlobalStateType, GraphSeal, Identity, Inputs,
-    MetaType, MetaValue, Metadata, OpId, Opout, RevealedData, RevealedValue, SchemaId,
+    MetaType, MetaValue, Metadata, Opout, RevealedData, RevealedValue, SchemaId,
     SealClosingStrategy, Signature, Transition, TypedAssigns,
 };
 
@@ -227,11 +224,11 @@ fn exec_op_and_assert_st0<S: ContractStateAccess + Clone>(
     }
 }
 
-fn create_vm_context<'op, S: ContractStateAccess>(
+fn create_vm_context<S: ContractStateAccess>(
     contract_id: ContractId,
-    op_info: OpInfo<'op>,
+    op_info: OpInfo<'_>,
     contract_state: Rc<RefCell<S>>,
-) -> VmContext<'op, S> {
+) -> VmContext<'_, S> {
     VmContext {
         contract_id,
         op_info,
@@ -438,7 +435,7 @@ impl TestEnv {
         self
     }
 
-    fn set_mock_fail_global_access(mut self, fail: bool) -> Self {
+    fn set_mock_fail_global_access(self, fail: bool) -> Self {
         self.mock_contract_state_rc.borrow_mut().fail_global_access = fail;
         self
     }
@@ -992,7 +989,7 @@ mod load_ops {
 }
 
 mod sum_verification_ops {
-    use aluvm::data::{MaybeNumber, Number};
+    use aluvm::data::Number;
     use aluvm::reg::{Reg32, RegA};
 
     use super::*;
@@ -1294,7 +1291,7 @@ mod vts_op {
     fn test_vts_fail_invalid_pubkey_format() {
         let mut env = TestEnv::for_transition();
         env.regs
-            .set_s16(u4::with(0), ByteStr::with(&[0x00, 0x01, 0x02]));
+            .set_s16(u4::with(0), ByteStr::with([0x00, 0x01, 0x02]));
         let secp = Secp256k1::new();
         let (secret_key, _public_key) = generate_keypair(&mut rand::thread_rng());
         let transition_op_val_mut = env.transition_val.as_mut().unwrap();
@@ -1354,7 +1351,6 @@ mod vts_op {
 }
 
 mod fail_op_test {
-    use aluvm::reg::{Reg32, RegA};
 
     use super::*;
 
@@ -1611,7 +1607,7 @@ mod bytecode_impl {
     use std::fmt::Debug;
 
     use aluvm::isa::Bytecode;
-    use aluvm::library::{CodeEofError, Cursor, LibSeg, Read, Write, WriteError};
+    use aluvm::library::{Cursor, LibSeg, Read};
 
     use super::*;
     use crate::vm::{ContractOp, ContractStateAccess};
