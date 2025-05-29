@@ -991,7 +991,6 @@ mod load_ops {
     }
 }
 
-
 mod sum_verification_ops {
     use aluvm::data::{MaybeNumber, Number};
     use aluvm::reg::{Reg32, RegA};
@@ -1261,7 +1260,7 @@ mod vts_op {
         let op_code = ContractOp::Vts(RegS::from(0));
         env.execute(op_code, true);
     }
-    
+
     #[test]
     fn test_vts_fail_no_signature_in_transition() {
         let mut env = TestEnv::for_transition();
@@ -1295,7 +1294,7 @@ mod vts_op {
     fn test_vts_fail_invalid_pubkey_format() {
         let mut env = TestEnv::for_transition();
         env.regs
-            .set_s16(u4::with(0), ByteStr::with(&[0x00, 0x01, 0x02])); 
+            .set_s16(u4::with(0), ByteStr::with(&[0x00, 0x01, 0x02]));
         let secp = Secp256k1::new();
         let (secret_key, _public_key) = generate_keypair(&mut rand::thread_rng());
         let transition_op_val_mut = env.transition_val.as_mut().unwrap();
@@ -1326,19 +1325,19 @@ mod vts_op {
     fn test_vts_fail_signature_mismatch() {
         let mut env = TestEnv::for_transition();
         let secp = Secp256k1::new();
-        let (_sk1, pk1) = generate_keypair(&mut rand::thread_rng()); 
-        let (sk2, _pk2) = generate_keypair(&mut rand::thread_rng()); 
+        let (_sk1, pk1) = generate_keypair(&mut rand::thread_rng());
+        let (sk2, _pk2) = generate_keypair(&mut rand::thread_rng());
         env.regs
             .set_s16(u4::with(0), ByteStr::with(&pk1.serialize()[..]));
 
         let transition_op_val_mut = env.transition_val.as_mut().unwrap();
         let transition_id_bytes = transition_op_val_mut.id().into_inner().into_inner();
         let message = SecpMessage::from_digest_slice(&transition_id_bytes).expect("32 bytes");
-        let sig = secp.sign_ecdsa(&message, &sk2); 
+        let sig = secp.sign_ecdsa(&message, &sk2);
         transition_op_val_mut.signature = Some(Bytes64::from_array(sig.serialize_compact()).into());
 
         let op_code = ContractOp::Vts(RegS::from(0));
-        env.execute(op_code, false); 
+        env.execute(op_code, false);
     }
 
     #[test]
@@ -1382,8 +1381,6 @@ mod instruction_set_impl {
 
     #[test]
     fn test_src_regs() {
-       
-       
         let op_ldp = ContractOp::<MockContractState>::LdP(
             DUMMY_ASSIGN_TYPE_DATA,
             Reg16::Reg0,
@@ -1392,7 +1389,6 @@ mod instruction_set_impl {
         let expected_ldp = bset![Reg::A(RegA::A16, Reg32::Reg0)];
         assert_eq!(op_ldp.src_regs(), expected_ldp);
 
-       
         let op_ldf = ContractOp::<MockContractState>::LdF(
             DUMMY_ASSIGN_TYPE_FUNGIBLE,
             Reg16::Reg1,
@@ -1401,19 +1397,16 @@ mod instruction_set_impl {
         let expected_ldf = bset![Reg::A(RegA::A16, Reg32::Reg1)];
         assert_eq!(op_ldf.src_regs(), expected_ldf);
 
-       
         let op_ldg =
             ContractOp::<MockContractState>::LdG(DUMMY_GLOBAL_TYPE_A, Reg16::Reg3, RegS::from(1));
         let expected_ldg = bset![Reg::A(RegA::A8, Reg32::Reg3)];
         assert_eq!(op_ldg.src_regs(), expected_ldg);
 
-       
         let op_ldc =
             ContractOp::<MockContractState>::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg4, RegS::from(2));
         let expected_ldc = bset![Reg::A(RegA::A32, Reg32::Reg4)];
         assert_eq!(op_ldc.src_regs(), expected_ldc);
 
-       
         let ops_empty_src = vec![
             ContractOp::<MockContractState>::CnP(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg32::Reg0),
             ContractOp::<MockContractState>::CnS(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg32::Reg0),
@@ -1431,7 +1424,6 @@ mod instruction_set_impl {
             assert_eq!(op.src_regs(), BTreeSet::new(), "Failed for {:?}", op);
         }
 
-       
         let ops_a64_src = vec![
             ContractOp::<MockContractState>::Sas(DUMMY_ASSIGN_TYPE_FUNGIBLE),
             ContractOp::<MockContractState>::Sps(DUMMY_ASSIGN_TYPE_FUNGIBLE),
@@ -1440,7 +1432,6 @@ mod instruction_set_impl {
         for op in ops_a64_src {
             assert_eq!(op.src_regs(), expected_a64_src, "Failed for {:?}", op);
         }
-       
     }
 
     #[test]
@@ -1473,7 +1464,7 @@ mod instruction_set_impl {
             Reg16::Reg0,
             Reg16::Reg9,
         );
-         // Reg16::Reg9 -> Reg32::Reg9
+        // Reg16::Reg9 -> Reg32::Reg9
         let expected_ldf = bset![Reg::A(RegA::A64, Reg32::Reg9)];
         assert_eq!(op_ldf.dst_regs(), expected_ldf);
 
@@ -1538,7 +1529,6 @@ mod instruction_set_impl {
         let op_vts = ContractOp::<MockContractState>::Vts(RegS::from(15));
         let expected_vts = bset![Reg::S(RegS::from(15))];
         assert_eq!(op_vts.dst_regs(), expected_vts);
-
     }
 
     #[test]
@@ -1614,5 +1604,185 @@ mod instruction_set_impl {
             ContractOp::Sps::<MockContractState>(DUMMY_ASSIGN_TYPE_FUNGIBLE).complexity(),
             20
         );
+    }
+}
+
+mod bytecode_impl {
+    use std::fmt::Debug;
+
+    use aluvm::isa::Bytecode;
+    use aluvm::library::{CodeEofError, Cursor, LibSeg, Read, Write, WriteError};
+
+    use super::*;
+    use crate::vm::{ContractOp, ContractStateAccess};
+
+    const TEST_BUFFER_SIZE: usize = 1024;
+
+    fn roundtrip_test_raw<S: ContractStateAccess + Clone + Debug + PartialEq>(op: ContractOp<S>)
+    where ContractOp<S>: Bytecode + PartialEq + Debug {
+        let libs = LibSeg::default();
+
+        let mut encoded_len_bytecode: u16;
+        let final_data_segment_content: ByteStr;
+        let mut actual_encoded_bytecode = [0u8; TEST_BUFFER_SIZE];
+
+        let instr_byte_expected = op.instr_byte();
+        println!("Encoding op: {:?}, expected instr_byte: {:#04x}", op, instr_byte_expected);
+        {
+            let data_segment_for_encoding = ByteStr::default();
+            let mut writer_cursor =
+                Cursor::with(&mut actual_encoded_bytecode[..], data_segment_for_encoding, &libs);
+            op.encode(&mut writer_cursor).expect("Failed to encode op");
+            let final_byte_pos = writer_cursor.pos();
+            let final_bit_pos = writer_cursor.offset().0;
+
+            encoded_len_bytecode =
+                if final_bit_pos as u8 > 0 { final_byte_pos + 1 } else { final_byte_pos };
+
+            encoded_len_bytecode = encoded_len_bytecode.min(TEST_BUFFER_SIZE as u16);
+
+            final_data_segment_content = writer_cursor.into_data_segment();
+
+            println!(
+                "Encoded bytecode ({} bytes): {:02x?}",
+                encoded_len_bytecode,
+                &actual_encoded_bytecode[..encoded_len_bytecode as usize]
+            );
+            if encoded_len_bytecode > 0 {
+                println!("First encoded byte: {:#04x}", actual_encoded_bytecode[0]);
+                assert_eq!(
+                    actual_encoded_bytecode[0], instr_byte_expected,
+                    "Mismatch of first byte after encoding"
+                );
+            }
+            println!("Encoded data segment len: {}", final_data_segment_content.len());
+        }
+
+        {
+            let mut reader_cursor = Cursor::with(
+                &actual_encoded_bytecode[..encoded_len_bytecode as usize],
+                final_data_segment_content.as_ref(),
+                &libs,
+            );
+
+            if encoded_len_bytecode > 0 {
+                let peeked_byte = reader_cursor
+                    .peek_u8()
+                    .expect("Failed to peek byte for decode");
+                println!("Byte to be decoded by ContractOp::decode: {:#04x}", peeked_byte);
+            }
+
+            let decoded_op = match ContractOp::<S>::decode(&mut reader_cursor) {
+                Ok(d_op) => {
+                    println!("Successfully decoded to: {:?}", d_op);
+                    d_op
+                }
+                Err(e) => {
+                    panic!("Failed to decode op: {:?}, error: {:?}", op, e);
+                }
+            };
+
+            assert_eq!(op, decoded_op, "Raw roundtrip failed for op: {:?}", op);
+        }
+    }
+    #[test]
+    fn test_instr_range() {
+        let range = ContractOp::<MockContractState>::instr_range();
+        assert_eq!(range, INSTR_CONTRACT_FROM..=INSTR_CONTRACT_TO);
+    }
+
+    #[test]
+    fn test_instr_byte_and_roundtrip() {
+        // CnP
+        let op_cnp = ContractOp::<MockContractState>::CnP(DUMMY_ASSIGN_TYPE_FUNGIBLE, Reg32::Reg0);
+        assert_eq!(op_cnp.instr_byte(), INSTR_CNP);
+        roundtrip_test_raw(op_cnp);
+
+        // CnS
+        let op_cns = ContractOp::<MockContractState>::CnS(DUMMY_ASSIGN_TYPE_DATA, Reg32::Reg1);
+        assert_eq!(op_cns.instr_byte(), INSTR_CNS);
+        roundtrip_test_raw(op_cns);
+
+        // CnG
+        let op_cng = ContractOp::<MockContractState>::CnG(DUMMY_GLOBAL_TYPE_A, Reg32::Reg2);
+        assert_eq!(op_cng.instr_byte(), INSTR_CNG);
+        roundtrip_test_raw(op_cng);
+
+        // CnC
+        let op_cnc = ContractOp::<MockContractState>::CnC(DUMMY_GLOBAL_TYPE_B, Reg32::Reg3);
+        assert_eq!(op_cnc.instr_byte(), INSTR_CNC);
+        roundtrip_test_raw(op_cnc);
+
+        // LdP
+        let op_ldp = ContractOp::<MockContractState>::LdP(
+            DUMMY_ASSIGN_TYPE_DATA,
+            Reg16::Reg0,
+            RegS::from(1),
+        );
+        assert_eq!(op_ldp.instr_byte(), INSTR_LDP);
+        roundtrip_test_raw(op_ldp);
+
+        // LdS
+        let op_lds = ContractOp::<MockContractState>::LdS(
+            DUMMY_ASSIGN_TYPE_FUNGIBLE,
+            Reg16::Reg2,
+            RegS::from(3),
+        );
+        assert_eq!(op_lds.instr_byte(), INSTR_LDS);
+        roundtrip_test_raw(op_lds);
+
+        // LdF
+        let op_ldf = ContractOp::<MockContractState>::LdF(
+            DUMMY_ASSIGN_TYPE_UNUSED,
+            Reg16::Reg4,
+            Reg16::Reg5,
+        );
+        assert_eq!(op_ldf.instr_byte(), INSTR_LDF);
+        roundtrip_test_raw(op_ldf);
+
+        // LdG
+        let op_ldg =
+            ContractOp::<MockContractState>::LdG(DUMMY_GLOBAL_TYPE_A, Reg16::Reg6, RegS::from(7));
+        assert_eq!(op_ldg.instr_byte(), INSTR_LDG);
+        roundtrip_test_raw(op_ldg);
+
+        // LdC
+        let op_ldc = ContractOp::<MockContractState>::LdC(
+            DUMMY_GLOBAL_TYPE_UNUSED,
+            Reg16::Reg8,
+            RegS::from(9),
+        );
+        assert_eq!(op_ldc.instr_byte(), INSTR_LDC);
+        roundtrip_test_raw(op_ldc);
+
+        // LdM
+        let op_ldm = ContractOp::<MockContractState>::LdM(DUMMY_META_TYPE_A, RegS::from(10));
+        assert_eq!(op_ldm.instr_byte(), INSTR_LDM);
+        roundtrip_test_raw(op_ldm);
+
+        // Svs
+        let op_svs = ContractOp::<MockContractState>::Svs(DUMMY_ASSIGN_TYPE_FUNGIBLE);
+        assert_eq!(op_svs.instr_byte(), INSTR_SVS);
+        roundtrip_test_raw(op_svs);
+
+        // Sas
+        let op_sas = ContractOp::<MockContractState>::Sas(DUMMY_ASSIGN_TYPE_DATA);
+        assert_eq!(op_sas.instr_byte(), INSTR_SAS);
+        roundtrip_test_raw(op_sas);
+
+        // Sps
+        let op_sps = ContractOp::<MockContractState>::Sps(DUMMY_ASSIGN_TYPE_UNUSED);
+        assert_eq!(op_sps.instr_byte(), INSTR_SPS);
+        roundtrip_test_raw(op_sps);
+
+        // Vts
+        let op_vts = ContractOp::<MockContractState>::Vts(RegS::from(11));
+        assert_eq!(op_vts.instr_byte(), INSTR_VTS);
+        roundtrip_test_raw(op_vts);
+
+        // Fail
+        let op_fail = ContractOp::Fail(0xF0, core::marker::PhantomData::<MockContractState>);
+        assert_eq!(op_fail.instr_byte(), 0xF0);
+        roundtrip_test_raw(op_fail);
     }
 }
