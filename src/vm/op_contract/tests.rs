@@ -95,17 +95,17 @@ impl<'a> GlobalStateIter for MockGlobalStateIter<'a> {
             panic!("MockGlobalStateIter cannot be reset to depth 0");
         }
 
-        let target_idx_for_last_0based = depth_1based.to_usize() - 1;
+        let tgt_internal_idx = depth_1based.to_usize() - 1;
 
-        if target_idx_for_last_0based < self.total_size {
-            // The item at target_idx_for_last_0based should become the "last" item.
-            let (ord_ref, data_ref) = &self.data[target_idx_for_last_0based];
+        if tgt_internal_idx < self.total_size {
+            // The item at internal_idx should become the "last" item.
+            let (ord_ref, data_ref) = &self.data[tgt_internal_idx];
             self.last_item_cache = Some((*ord_ref, data_ref));
             // The next call to prev() should yield the item *after* this one.
-            self.current_pos = target_idx_for_last_0based + 1;
+            self.current_pos = tgt_internal_idx + 1;
         } else {
             // Requested 1-based depth is out of bounds.
-            // e.g., total_size=1. reset(depth_1based=2). target_idx_for_last_0based=1.
+            // e.g., total_size=1. reset(depth_1based=2). internal_idx=1.
             // 1 < 1 is false. Comes here.
             self.last_item_cache = None;
             self.current_pos = self.total_size;
@@ -619,6 +619,7 @@ mod load_ops {
     use bp::seals::SecretSeal;
 
     use super::*;
+    use crate::{OpId, TransitionType};
 
     // LdP (Load Previous structured state)
     #[test]
@@ -877,7 +878,7 @@ mod load_ops {
         // LdC uses contract_state, not current op's state
         let mut env =
             TestEnv::for_genesis().set_mock_global_state_history(DUMMY_GLOBAL_TYPE_A, history);
-        // let the depth eq 0
+        // let the depth eq 1
         env.regs.set_n(RegA::A32, Reg32::Reg0, Number::from(1u32));
 
         let op_code = ContractOp::LdC(DUMMY_GLOBAL_TYPE_A, Reg16::Reg0, RegS::from(3));
@@ -886,16 +887,24 @@ mod load_ops {
     }
 
     #[test]
-    fn test_ldc_success_at_depth_one() {
+    fn test_ldc_success_at_depth_one_and_two() {
         let data_vec_hist1 = vec![0x01, 0x02];
         let data_vec_hist2 = vec![0x03, 0x04];
         let history = vec![
             (
-                GlobalOrd::genesis(1), // d = 1
+                // d = 1
+                GlobalOrd::genesis(1),
                 RevealedData::new(SmallBlob::try_from(data_vec_hist1.clone()).unwrap()),
             ),
             (
-                GlobalOrd::genesis(2), // d = 2
+                // d = 2
+                GlobalOrd::transition(
+                    OpId::from([0; 32]),
+                    0,
+                    TransitionType::with(0),
+                    0,
+                    WitnessOrd::Ignored,
+                ),
                 RevealedData::new(SmallBlob::try_from(data_vec_hist2.clone()).unwrap()),
             ),
         ];
@@ -948,7 +957,6 @@ mod load_ops {
     fn test_ldc_fail_depth_too_large_for_u24() {
         let mut env = TestEnv::for_genesis();
         // Set depth register to a value greater than u24::MAX to test saturation/error handling
-        // NOTE: depth starts from 1, not 0 !!!
         env.regs
             .set_n(RegA::A32, Reg32::Reg0, Number::from(u24::MAX.to_u32() + 1));
 
